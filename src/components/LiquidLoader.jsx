@@ -43,7 +43,7 @@ function wavePath(level, amp, k, phase) {
 
 // Longest the loader waits for the robot model before carrying on (the robot
 // component falls back to the procedural robot on its own).
-const MAX_READY_WAIT_MS = 12000
+const MAX_READY_WAIT_MS = 20000
 
 export default function LiquidLoader({ onComplete, introState, ready = true }) {
   const [percent, setPercent] = useState(1)

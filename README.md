@@ -2,7 +2,7 @@
 
 An interactive, cinematic landing hero built with **React 19, Tailwind CSS v4, Motion (`motion/react`), Three.js, @react-three/fiber and @react-three/drei**.
 
-A visitor enters an empty white robotics test room. A small service robot notices them, walks in from the left, studies them curiously, follows the cursor with its head, and — on the first scroll — politely steps back, moves aside, turns to the wall and crouches, revealing the actual website.
+A visitor enters an empty white robotics test room. A small service robot (walking like NVIDIA's "Blue" droid — forward only, quick rhythmic steps, expressive head) walks in from the left, comes right up to the camera until it's framed from the waist up, studies the visitor curiously and follows the cursor with its head. On the first scroll it turns around, walks off to the side, faces the wall and sits down, revealing the actual website.
 
 ## Run it
 
@@ -56,7 +56,7 @@ A phase can only advance from itself, so every transition happens exactly once.
 
 - **Camera is a fixed observer.** It is aimed once (`FixedCamera`) and never moved; only its projection aspect follows the canvas size.
 - **No React state per frame.** Continuous motion runs in `useFrame` on refs; React state changes only on phase transitions. The loader keeps just the integer percentage in state.
-- **Physical walking.** Feet are planted in world space and re-placed by a footstep planner (walk, sidestep, backward step, turn in place, final foot correction). Legs are solved with analytic 2-bone IK, ankles keep the soles flat, and the body has weight shift, pelvis twist, heavy foot-strike dip and a mechanical settle.
+- **Physical walking.** The robot only walks forwards (it turns in place or along a curve). Feet are planted in world space and re-placed by a footstep planner (walk, turn in place, final foot correction). Legs are solved with analytic 2-bone IK, ankles keep the soles flat, and the body has weight shift, pelvis twist, heavy foot-strike dip and a mechanical settle.
 - **Head tracking.** Normalised mouse (−1…1) → `targetHeadY = mouseX * 15°`, `targetHeadX = −mouseY * 10°` around the look-at-camera pose, clamped and critically damped. Torso, arms, legs and feet stay put.
 - **Performance.** Particle count, shadow resolution, geometry detail and DPR scale with the viewport. After `HERO_ACTIVE` the contact shadow is baked once and the canvas switches to on-demand rendering. Listeners and Three.js resources are cleaned up on unmount.
 
@@ -70,4 +70,4 @@ The robot is the **first model generated with Higgsfield** (SAM 3D) from the whi
 
 Each part hangs off the articulated rig at landmarks measured on the mesh: hips, a reverse (digitigrade) knee, ankles, the neck base and the head pivot. Dark joint caps hide the cuts, and a 15 cm antenna rises from the "ear" on each side of the head.
 
-The mesh is loaded at runtime from the Higgsfield CDN (`SCAN_URL`, CORS-enabled, immutable). The intro loader holds at 90% until it's ready. If the download fails or takes longer than 15 s, the hand-modelled procedural robot takes over automatically, running the same animation system.
+The mesh is loaded at runtime from the Higgsfield CDN (`SCAN_URL`, CORS-enabled, immutable). The intro loader holds at 90% until it's ready. If the download fails or takes longer than 30 s, the hand-modelled procedural robot takes over automatically, running the same animation system.

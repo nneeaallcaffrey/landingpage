@@ -163,7 +163,7 @@ function segment(sourceGeometry) {
  * Downloads the Higgsfield mesh and prepares it for the rig.
  * Resolves to { parts: Record<string, BufferGeometry>, material }.
  */
-export async function loadScanRobot({ signal, timeoutMs = 15000 } = {}) {
+export async function loadScanRobot({ signal, timeoutMs = 30000 } = {}) {
   const loader = new GLTFLoader()
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('scan robot: timeout')), timeoutMs))
   const gltf = await Promise.race([loader.loadAsync(SCAN_URL), timeout])
@@ -180,7 +180,16 @@ export async function loadScanRobot({ signal, timeoutMs = 15000 } = {}) {
     map.colorSpace = THREE.SRGBColorSpace
     map.anisotropy = 4
   }
-  const material = new THREE.MeshStandardMaterial({ map, roughness: 0.78, metalness: 0 })
+  // The scan's texture already carries its shading (like the Higgsfield preview), so part of
+  // it is shown unlit via the emissive channel; scene lights add form and shadows on top.
+  const material = new THREE.MeshStandardMaterial({
+    map,
+    emissiveMap: map,
+    emissive: new THREE.Color('#ffffff'),
+    emissiveIntensity: 0.45,
+    roughness: 0.8,
+    metalness: 0,
+  })
   const parts = segment(source.geometry)
 
   source.geometry.dispose()
