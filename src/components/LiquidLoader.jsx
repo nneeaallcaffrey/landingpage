@@ -5,9 +5,10 @@ import { TIMING, TIME_SCALE } from '../scene/phases'
 /**
  * Futuristic liquid loader.
  * A glass disc slowly fills with a silvery liquid while a hairline arc fills
- * around the circumference (1% -> 100%). At 100% it holds, drops its labels,
- * swells, becomes unstable, vibrates, brightens and contracts to a point —
- * the moment the scene layer takes over with the energy burst.
+ * around the circumference (1% -> 100%). At 100% the room goes dark and the
+ * loader turns luminous; it drops its labels, swells, becomes unstable,
+ * vibrates, brightens and contracts to a point — the moment the scene layer
+ * takes over with a white energy burst on black.
  *
  * Only the integer percentage lives in React state; the liquid, arc, jitter
  * and filters are written straight to the SVG from the animation frame loop.
@@ -24,12 +25,26 @@ const smoothstep = (a, b, x) => {
   const t = clamp01((x - a) / (b - a))
   return t * t * (3 - 2 * t)
 }
-const mixHex = (a, b, t) => {
-  const pa = parseInt(a.slice(1), 16)
-  const pb = parseInt(b.slice(1), 16)
-  const ch = (s) => Math.round(((pa >> s) & 255) + (((pb >> s) & 255) - ((pa >> s) & 255)) * t)
-  return `rgb(${ch(16)},${ch(8)},${ch(0)})`
+const hex = (h) => [16, 8, 0].map((s) => (parseInt(h.slice(1), 16) >> s) & 255)
+const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t)
+const css = (c) => `rgb(${c.map(Math.round).join(',')})`
+
+// light theme (while loading) -> dark theme (after 100%)
+const COL = {
+  ink: [hex('#1C2E1E'), hex('#ffffff')],
+  tickOff: [hex('#c9cfcc'), hex('#3a3d3c')],
+  track: [hex('#e2e5e3'), hex('#2b2e2d')],
+  glassTop: [hex('#fdfdfc'), hex('#262a28')],
+  glassBottom: [hex('#e9ecea'), hex('#0f1110')],
+  glassStroke: [hex('#dde1df'), hex('#3b403e')],
+  liquidTop: [hex('#c3cbc7'), hex('#eef2f0')],
+  liquidBottom: [hex('#8f9a95'), hex('#b9c4bf')],
+  label: [hex('#525252'), hex('#a3a3a3')],
+  percent: [hex('#171717'), hex('#ffffff')],
 }
+const WHITE = hex('#ffffff')
+const WHITE_SOFT = hex('#f6f8f7')
+const themed = (key, d) => mix(COL[key][0], COL[key][1], d)
 
 function wavePath(level, amp, k, phase) {
   const x0 = C - R_LIQ - 12
@@ -50,6 +65,7 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
   const [critical, setCritical] = useState(false)
   const progress = useMotionValue(1)
   const collapse = useMotionValue(0)
+  const dark = useMotionValue(0)
   const shown = useRef(1)
   const level = useRef(0.01)
   const onCompleteRef = useRef(onComplete)
@@ -67,6 +83,13 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
   const coreRef = useRef()
   const bloomRef = useRef()
   const ticksRef = useRef()
+  const haloRef = useRef()
+  const trackRef = useRef()
+  const glassRef = useRef()
+  const glassTopRef = useRef()
+  const glassBottomRef = useRef()
+  const labelRef = useRef()
+  const percentRef = useRef()
 
   useEffect(() => {
     onCompleteRef.current = onComplete
@@ -93,6 +116,9 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
     const unsubCollapse = collapse.on('change', (v) => {
       introState.collapse = v
     })
+    const unsubDark = dark.on('change', (v) => {
+      introState.dark = v
+    })
 
     ;(async () => {
       // 1 -> 20 -> 45 -> 70 -> 90 -> 100, eased rather than linear
@@ -112,7 +138,8 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
       if (cancelled) return
       await run(animate(progress, 100, { duration: (TIMING.loaderProgress * 0.13) / ts, ease: 'easeOut' }))
       if (cancelled) return
-      await run(animate(0, 1, { duration: TIMING.loaderHold / ts }))
+      // 100%: the room goes dark
+      await run(animate(dark, 1, { duration: TIMING.loaderHold / ts, ease: 'easeInOut' }))
       if (cancelled) return
       setCritical(true)
       await run(animate(collapse, 1, { duration: TIMING.loaderCritical / ts, delay: 0.2 / ts, ease: 'linear' }))
@@ -125,8 +152,9 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
       running.forEach((a) => a.stop())
       unsubProgress()
       unsubCollapse()
+      unsubDark()
     }
-  }, [progress, collapse, introState])
+  }, [progress, collapse, dark, introState])
 
   useAnimationFrame((time, delta) => {
     const t = time / 1000
@@ -135,6 +163,7 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
     level.current += (p - level.current) * (1 - Math.exp(-Math.min(delta, 100) / 110))
     const lv = level.current
     const c = collapse.get()
+    const d = dark.get()
 
     // progress arc around the circumference + head dot
     if (arcRef.current) arcRef.current.style.strokeDashoffset = `${CIRC * (1 - p)}`
@@ -173,11 +202,27 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
     )
 
     const bright = smoothstep(0.42, 0.92, c)
-    stopTopRef.current?.setAttribute('stop-color', mixHex('#c3cbc7', '#ffffff', bright))
-    stopBottomRef.current?.setAttribute('stop-color', mixHex('#8f9a95', '#f6f8f7', bright))
+    stopTopRef.current?.setAttribute('stop-color', css(mix(themed('liquidTop', d), WHITE, bright)))
+    stopBottomRef.current?.setAttribute('stop-color', css(mix(themed('liquidBottom', d), WHITE_SOFT, bright)))
     coreRef.current?.setAttribute('opacity', bright.toFixed(3))
     bloomRef.current?.setAttribute('opacity', (bright * 0.95).toFixed(3))
-    if (ticksRef.current) ticksRef.current.style.opacity = `${1 - smoothstep(0, 0.3, c)}`
+
+    // light -> dark theme
+    const ink = css(themed('ink', d))
+    arcRef.current?.setAttribute('stroke', ink)
+    dotRef.current?.setAttribute('fill', ink)
+    trackRef.current?.setAttribute('stroke', css(themed('track', d)))
+    glassRef.current?.setAttribute('stroke', css(themed('glassStroke', d)))
+    glassTopRef.current?.setAttribute('stop-color', css(themed('glassTop', d)))
+    glassBottomRef.current?.setAttribute('stop-color', css(themed('glassBottom', d)))
+    haloRef.current?.setAttribute('opacity', (1 - 0.8 * d).toFixed(3))
+    if (labelRef.current) labelRef.current.style.color = css(themed('label', d))
+    if (percentRef.current) percentRef.current.style.color = css(themed('percent', d))
+    if (ticksRef.current) {
+      ticksRef.current.style.opacity = `${1 - smoothstep(0, 0.3, c)}`
+      ticksRef.current.style.setProperty('--tick-on', ink)
+      ticksRef.current.style.setProperty('--tick-off', css(themed('tickOff', d)))
+    }
   })
 
   return (
@@ -190,8 +235,8 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
             <stop offset="100%" stopColor="#f7f7f5" stopOpacity="0" />
           </radialGradient>
           <radialGradient id="ll-glass" cx="42%" cy="38%" r="65%">
-            <stop offset="0%" stopColor="#fdfdfc" />
-            <stop offset="100%" stopColor="#e9ecea" />
+            <stop ref={glassTopRef} offset="0%" stopColor="#fdfdfc" />
+            <stop ref={glassBottomRef} offset="100%" stopColor="#e9ecea" />
           </radialGradient>
           <linearGradient id="ll-liquid" x1="0" y1="0" x2="0" y2="1">
             <stop ref={stopTopRef} offset="0%" stopColor="#c3cbc7" />
@@ -205,19 +250,19 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
           <clipPath id="ll-clip">
             <circle cx={C} cy={C} r={R_LIQ} />
           </clipPath>
-          <filter id="ll-organic" x="-25%" y="-25%" width="150%" height="150%">
-            <feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="2" seed="7" result="noise" />
+          <filter id="ll-organic" x="-12%" y="-12%" width="124%" height="124%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="1" seed="7" result="noise" />
             <feOffset ref={offsetRef} in="noise" dx="0" dy="0" result="drift" />
             <feDisplacementMap ref={dispRef} in="SourceGraphic" in2="drift" scale="4" xChannelSelector="R" yChannelSelector="G" />
           </filter>
         </defs>
 
         <g ref={groupRef}>
-          <circle cx={C} cy={C} r={98} fill="url(#ll-halo)" />
+          <circle ref={haloRef} cx={C} cy={C} r={98} fill="url(#ll-halo)" />
           <circle ref={bloomRef} cx={C} cy={C} r={96} fill="url(#ll-core)" opacity="0" />
 
           {/* engineering ticks */}
-          <g ref={ticksRef}>
+          <g ref={ticksRef} style={{ '--tick-on': '#1C2E1E', '--tick-off': '#c9cfcc' }}>
             {Array.from({ length: TICKS }, (_, i) => {
               const a = -Math.PI / 2 + (i / TICKS) * Math.PI * 2
               const long = i % 6 === 0
@@ -231,7 +276,7 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
                   y1={C + r0 * Math.sin(a)}
                   x2={C + r1 * Math.cos(a)}
                   y2={C + r1 * Math.sin(a)}
-                  stroke={active ? '#1C2E1E' : '#c9cfcc'}
+                  style={{ stroke: active ? 'var(--tick-on)' : 'var(--tick-off)' }}
                   strokeOpacity={active ? 0.55 : 0.6}
                   strokeWidth={0.6}
                 />
@@ -241,7 +286,7 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
 
           {/* liquid body with an organic, slightly unstable contour */}
           <g filter="url(#ll-organic)">
-            <circle cx={C} cy={C} r={R_LIQ + 1.5} fill="url(#ll-glass)" stroke="#dde1df" strokeWidth="0.8" />
+            <circle ref={glassRef} cx={C} cy={C} r={R_LIQ + 1.5} fill="url(#ll-glass)" stroke="#dde1df" strokeWidth="0.8" />
             <g clipPath="url(#ll-clip)">
               <path ref={wave1Ref} fill="url(#ll-liquid)" opacity="0.92" />
               <path ref={wave2Ref} fill="#dfe5e2" opacity="0.55" />
@@ -251,7 +296,7 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
           </g>
 
           {/* circular progress: fills around the circumference */}
-          <circle cx={C} cy={C} r={R_RING} fill="none" stroke="#e2e5e3" strokeWidth="1" />
+          <circle ref={trackRef} cx={C} cy={C} r={R_RING} fill="none" stroke="#e2e5e3" strokeWidth="1" />
           <circle
             ref={arcRef}
             cx={C}
@@ -278,8 +323,10 @@ export default function LiquidLoader({ onComplete, introState, ready = true }) {
             exit={{ opacity: 0, scale: 0.94, transition: { duration: 0.3 } }}
             className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
           >
-            <span className="text-[9px] tracking-[0.42em] pl-[0.42em] text-neutral-600 font-medium">LOADING</span>
-            <span className="mt-1 text-[22px] font-light tabular-nums tracking-tight text-neutral-900" aria-live="polite">
+            <span ref={labelRef} className="text-[9px] tracking-[0.42em] pl-[0.42em] text-neutral-600 font-medium">
+              LOADING
+            </span>
+            <span ref={percentRef} className="mt-1 text-[22px] font-light tabular-nums tracking-tight text-neutral-900" aria-live="polite">
               {percent}%
             </span>
           </motion.div>

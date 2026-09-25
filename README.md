@@ -39,12 +39,12 @@ A phase can only advance from itself, so every transition happens exactly once.
 | File | Role |
 | --- | --- |
 | `src/App.jsx` | Phase machine, mouse ref, scroll/touch/key trigger, scroll lock, layout |
-| `src/components/LiquidLoader.jsx` | SVG liquid loader 1% → 100%, then vibrate / contract / brighten |
+| `src/components/LiquidLoader.jsx` | SVG liquid loader 1% → 100%; at 100% the room goes black and the loader turns luminous, then vibrates / contracts |
 | `src/scene/Scene.jsx` | Canvas, fixed camera, studio lighting, white room, contact shadows |
-| `src/scene/IntroFX.jsx` | Full-frame veil + white star-particle burst (custom shaders) |
+| `src/scene/IntroFX.jsx` | Full-frame veil (white → black) + white star-particle burst on black (custom shaders) |
 | `src/scene/RobotActor.jsx` | Loads the Higgsfield robot; falls back to the procedural one if it can't be downloaded |
 | `src/scene/scanRobotModel.js` | Downloads the Higgsfield mesh, skins it to the rig and repaints its texture with a clean palette |
-| `src/scene/ScanRobot.jsx` | The Higgsfield robot as one skinned mesh on the articulated rig (15 cm antennas) |
+| `src/scene/ScanRobot.jsx` | The Higgsfield robot as one skinned mesh on the articulated rig, with 3D camera-lens eyes and 15 cm antennas |
 | `src/scene/Robot.jsx` | Procedural fallback robot (every joint is its own pivot) |
 | `src/scene/useRobotRig.js` | Connects any rig to the controller (phases, frame loop, resize handling) |
 | `src/scene/robotController.js` | Footstep planner, 2-bone leg IK, body dynamics, head/neck control, choreography |
@@ -58,12 +58,18 @@ A phase can only advance from itself, so every transition happens exactly once.
 - **No React state per frame.** Continuous motion runs in `useFrame` on refs; React state changes only on phase transitions. The loader keeps just the integer percentage in state.
 - **Physical walking.** The robot only walks forwards (it turns in place or along a curve). Feet are planted in world space and re-placed by a footstep planner (walk, turn in place, final foot correction). Legs are solved with analytic 2-bone IK, ankles keep the soles flat, and the body has weight shift, pelvis twist, heavy foot-strike dip and a mechanical settle.
 - **Head tracking.** Normalised mouse (−1…1) → `targetHeadY = mouseX * 15°`, `targetHeadX = −mouseY * 10°` around the look-at-camera pose, clamped and critically damped. Torso, arms, legs and feet stay put.
-- **Performance.** Particle count, shadow resolution, geometry detail and DPR scale with the viewport. After `HERO_ACTIVE` the contact shadow is baked once and the canvas switches to on-demand rendering. Listeners and Three.js resources are cleaned up on unmount.
+- **Performance.**
+  - Particle count, shadow resolution and pixel density scale with the viewport. Pixel density also steps down automatically when the frame rate drops (`PerformanceMonitor`).
+  - The room is flat-shaded, with a shadow-only layer on the floor, so the pixels that fill the screen skip the lighting maths.
+  - While the intro veil covers the screen, the room and the contact shadow aren't drawn.
+  - The robot's livery is painted in 8 ms slices, so the loader never freezes, and the scan's unused texture is not decoded.
+  - After `HERO_ACTIVE` the contact shadow is baked once and the canvas switches to on-demand rendering.
+  - Listeners and Three.js resources are cleaned up on unmount.
 
 ## Robot design & Higgsfield
 
 The robot is the **first model generated with Higgsfield** (SAM 3D) from the white / blue bipedal service-robot reference. It's a single textured mesh, so at load time `scanRobotModel.js` skins it to the articulated rig. Every vertex gets smooth weights for the torso, neck, head, thigh, shin and foot bones. The bones sit at landmarks measured on the mesh: hips, a reverse (digitigrade) knee, ankles, the neck base and the head pivot. The shell bends continuously at every joint, so there are no gaps and the cables stay connected.
 
-The scanned texture is repainted with a clean white / blue / graphite palette. Colours are decided on the 3D surface rather than in the texture image, because the scan's UV atlas is cut into hundreds of small islands. Every vertex votes from the texels around it, and the votes are smoothed over its mesh neighbours. Each triangle is then repainted from its vertices' votes. The result is flat colours with crisp edges: no dirt specks, and no dark seams. A 15 cm antenna rises from each side of the head.
+The scan's own texture is blotchy, so the robot is painted with the reference robot's livery instead. `paintAt` decides the colour of every surface point from its 3D position and normal: an off-white shell, a light grey face with black square lens mounts, blue stripes and leg covers, a dark display window with orange details, bronze joints, and blue feet with an orange sole. The colours are drawn into the mesh's own UV layout, together with a roughness / metalness map so the lenses shine and the joints read as metal. The eyes are real 3D camera lenses like the reference: black square housings, knurled metal barrels, gold-coated lenses under a glossy glass dome, plus a third camera on the head's corner. A 15 cm antenna rises from each side of the head.
 
 The mesh is loaded at runtime from the Higgsfield CDN (`SCAN_URL`, CORS-enabled, immutable). The intro loader holds at 90% until it's ready. If the download fails or takes longer than 30 s, the hand-modelled procedural robot takes over automatically, running the same animation system.
