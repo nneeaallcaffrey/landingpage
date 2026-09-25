@@ -188,7 +188,7 @@ function buildSkinnedGeometry(source) {
 // colour (sRGB), roughness, metalness
 const PAINT = {
   shell: [[236, 235, 231], 0.55, 0], // off-white shell
-  panel: [[214, 216, 219], 0.55, 0], // light grey face plate / vent frame
+  panel: [[202, 205, 209], 0.55, 0], // light grey face plate / vent frame
   neck: [[198, 201, 205], 0.5, 0],
   mount: [[126, 131, 137], 0.5, 0.1], // mid grey mounts and actuators
   display: [[84, 88, 94], 0.45, 0.1], // display panel frame
@@ -246,17 +246,18 @@ function paintAt(x, y, z, nx, ny, nz) {
         return PAINT.recess
       }
       if (ax < 0.095 && y > -0.03 && y < 0.083) return PAINT.display
-      if (ax < 0.09 && y > -0.162 && y < -0.058 && z < 0.2165) return ((y + 0.162) / 0.012) % 1 < 0.35 ? PAINT.mount : PAINT.recess
+      // V vent with slats
+      if (y > -0.156 && y < -0.064 && ax < 0.03 + ((y + 0.156) / 0.092) * 0.05) return ((y + 0.156) / 0.012) % 1 < 0.35 ? PAINT.mount : PAINT.recess
       if (ax < 0.105 && y > -0.172 && y < -0.05) return PAINT.panel
     }
     if (Math.abs(ny) < 0.5 && ((y > 0.098 && y < 0.12) || y < -0.198)) return PAINT.blue // stripe + bottom band
-    if (ax > 0.128 && y > -0.205 && y < 0 && z > -0.24 && z < 0.075) return PAINT.mount // hip actuator bay
+    if (ax > 0.162 && y > -0.205 && y < 0) return PAINT.mount // hip axle between body and housing
     return PAINT.shell
   }
 
   if (ax > 0.262 && y < 0 && y > -0.37) return PAINT.cable // cables along the legs
   if (ax >= 0.172 && y > 0) return y < 0.095 ? PAINT.blue : PAINT.cable // cable loops + connectors
-  if (y > -0.235) return PAINT.shell // side housings
+  if (y > -0.235) return ax < 0.18 && Math.abs(nx) > 0.6 && nx * x < 0 ? PAINT.mount : PAINT.shell // side housings (inner face in shadow grey)
 
   // legs
   if (Math.hypot(y - KNEE_YZ[0], z - KNEE_YZ[1]) < 0.045) return PAINT.bronze
