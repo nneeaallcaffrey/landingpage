@@ -22,11 +22,13 @@ export const DIM = {
   footX: 0.08, // neutral foot lateral offset
   footZ: 0, // neutral ankle position along the heading
   kneeDir: 1, // 1: knee bends forward, -1: reverse (digitigrade) knee
-  crouch: 0, // extra hip drop while standing / walking
+  crouch: 0, // extra hip drop while standing
+  walkCrouch: 0, // additional hip drop while walking or turning (more reach)
   lowerDepth: 0.1, // hip drop when the robot lowers itself
   maxStep: 0.14,
   speed: 1, // walking speed multiplier
   headWidth: 0.37,
+  headTop: 0.9, // highest point incl. antennas (framing)
   // neck chain rest angles (base, mid, head) and how they fold when lowering
   neck: { base: 0.3, mid: -0.6, head: 0.3, foldBase: 0.55, foldMid: -0.8, foldHead: 0.25 },
 }
@@ -71,6 +73,19 @@ function travelProfile(u, a = 0.2, d = 0.3) {
   if (u < a) return vmax * a * ramp(u / a)
   if (u < 1 - d) return vmax * (0.5 * a + (u - a))
   return 1 - vmax * d * ramp((1 - u) / d)
+}
+
+/**
+ * Arc-length parametrised path that leaves `p0` heading `h0` and arrives at
+ * `p3` heading `h3` (headings are yaw angles; the robot only walks forwards).
+ */
+function forwardCurve(p0, h0, p3, h3, k = 0.5) {
+  const d = p0.distanceTo(p3)
+  const p1 = p0.clone().add(new THREE.Vector3(Math.sin(h0), 0, Math.cos(h0)).multiplyScalar(d * k))
+  const p2 = p3.clone().sub(new THREE.Vector3(Math.sin(h3), 0, Math.cos(h3)).multiplyScalar(d * k))
+  const curve = new THREE.CubicBezierCurve3(p0, p1, p2, p3)
+  curve.arcLengthDivisions = 240
+  return curve
 }
 
 /** Critically damped follower (Game Programming Gems 4 "SmoothDamp"). */
@@ -154,7 +169,7 @@ export class RobotController {
     }))
     this.lastStep = -1
     this.dsTimer = 0
-    this.dsTime = 0.1
+    this.dsTime = 0.07
     this.swingIndex = -1
     this.stepping = false
 
@@ -168,6 +183,8 @@ export class RobotController {
     this.leanOffsetT = 0
     this.lowerTarget = 0
     this.walkLift = 0
+    this.crouch = new Smooth()
+    this.nod = new Smooth()
     this.idle = 0
     this.arms = [new Spring(), new Spring()]
 
@@ -180,6 +197,7 @@ export class RobotController {
     this.lensGlow = new Smooth(0.15)
     this.lensGlowT = 0.15
 
+    this.crouch.set(this.dim.crouch)
     this.placeStanding(this.pos.x, this.pos.z, this.yaw)
   }
 
@@ -232,20 +250,18 @@ export class RobotController {
         break
       }
       case P.ROBOT_ENTERING: {
-        const zStart = -0.42
-        const start = new THREE.Vector3(-(layout.edgeX(zStart) + 0.12), 0, zStart)
-        const end = new THREE.Vector3(0, 0, 0)
-        const dist = start.distanceTo(end)
-        plan.start = start
-        plan.end = end
-        plan.yawWalk = Math.atan2(end.x - start.x, end.z - start.z)
-        plan.yawEnd = 0.22
-        // Peak walking speed ~0.38 m/s: slow, heavy and deliberate.
-        plan.T = Math.max(2.8, (dist * 1.34) / (0.38 * this.dim.speed))
-        this.placeStanding(start.x, start.z, plan.yawWalk)
+        // The robot can only walk forwards: it enters from the left heading +X and
+        // curves towards the viewer, arriving close enough to be framed waist-up.
+        const zStart = 0.8
+        const start = new THREE.Vector3(-(layout.edgeX(zStart) + 0.3), 0, zStart)
+        const end = new THREE.Vector3(0, 0, this.nearZ(layout))
+        plan.curve = forwardCurve(start, Math.PI / 2, end, 0)
+        plan.length = plan.curve.getLength()
+        plan.T = Math.max(3.5, (plan.length * 1.34) / (0.38 * this.dim.speed))
+        this.placeStanding(start.x, start.z, Math.PI / 2)
         this.stepping = true
         this.headYaw.set(0)
-        this.headPitch.set(0.08)
+        this.headPitch.set(0.1)
         break
       }
       case P.ROBOT_CENTER: {
@@ -254,13 +270,17 @@ export class RobotController {
         break
       }
       case P.ROBOT_MOVING_ASIDE: {
+        // Forward-only: turn in place towards the free spot, then walk there.
         plan.p0 = this.pos.clone()
         plan.yaw0 = this.yaw
-        plan.back = this.pos.clone().add(new THREE.Vector3(0, 0, -0.12))
         const zAside = -0.3
         plan.aside = new THREE.Vector3(this.asideX(layout, zAside), 0, zAside)
-        plan.yawAside = 0.45
-        plan.Tl = Math.max(1.6, (plan.back.distanceTo(plan.aside) * 1.43) / (0.32 * this.dim.speed))
+        plan.yawWalk = Math.atan2(plan.aside.x - plan.p0.x, plan.aside.z - plan.p0.z)
+        plan.dYaw = angleDiff(plan.yaw0, plan.yawWalk)
+        plan.turnStart = 0.45
+        plan.Tt = Math.max(1.2, Math.abs(plan.dYaw) / 1.5)
+        plan.walkStart = plan.turnStart + plan.Tt + 0.15
+        plan.Tw = Math.max(2, (plan.p0.distanceTo(plan.aside) * 1.34) / (0.38 * this.dim.speed))
         break
       }
       case P.ROBOT_FACING_WALL: {
@@ -273,6 +293,31 @@ export class RobotController {
       default:
         break
     }
+  }
+
+  /**
+   * Stage-space Z where the robot, facing the camera, is framed from the waist
+   * up — pulled back if needed so the head still fits the viewport width/height.
+   */
+  nearZ(layout) {
+    const d = this.dim
+    const search = (f) => {
+      // f(z) is monotonic increasing towards the camera; returns the z where f crosses 0
+      let lo = -0.5
+      let hi = 2.9
+      if (f(hi) < 0) return hi
+      if (f(lo) > 0) return lo
+      for (let i = 0; i < 32; i++) {
+        const mid = (lo + hi) / 2
+        if (f(mid) > 0) hi = mid
+        else lo = mid
+      }
+      return lo
+    }
+    const waist = search((z) => -layout.project(0, d.hipH, z).y - 0.9) // hip on the bottom edge
+    const fitW = search((z) => layout.project(d.headWidth / 2, d.headTop, z).x - 0.86)
+    const fitH = search((z) => layout.project(0, d.headTop, z).y - 0.96)
+    return Math.min(waist, fitW, fitH)
   }
 
   /** Stage-space X that leaves ~70% of the robot's silhouette inside the frame. */
@@ -331,17 +376,20 @@ export class RobotController {
     switch (this.phase) {
       case P.ROBOT_ENTERING: {
         const u = clamp(t / pl.T, 0, 1)
-        const s = travelProfile(u, 0.16, 0.36)
-        this.pos.lerpVectors(pl.start, pl.end, s)
-        const turn = smootherstep((s - 0.52) / 0.48)
-        this.yaw = pl.yawWalk + angleDiff(pl.yawWalk, pl.yawEnd) * turn
-        // Look ahead with a slow scan; keep looking along the path while the body turns.
-        const lag = angleDiff(this.yaw, pl.yawWalk)
-        ht.yaw = lag * 0.55 + 0.1 * Math.sin(this.time * 0.6) * (1 - turn)
-        ht.pitch = 0.1
-        ht.roll = 0
-        this.headSmooth = 0.55
-        this.lensGlowT = 0.15
+        const s = travelProfile(u, 0.14, 0.34)
+        pl.curve.getPointAt(s, this.pos)
+        pl.curve.getTangentAt(Math.min(s, 0.999), _v3)
+        this.yaw = Math.atan2(_v3.x, _v3.z)
+        // The head leads into the curve and, halfway, turns to glance at the viewer.
+        pl.curve.getTangentAt(Math.min(0.999, s + 0.12), _v3)
+        const lead = angleDiff(this.yaw, Math.atan2(_v3.x, _v3.z)) * 0.8
+        const look = this.lookAtCamera(ctx.camera)
+        const glance = Math.pow(Math.sin(Math.PI * clamp((s - 0.22) / 0.36, 0, 1)), 2) * 0.85
+        ht.yaw = lerp(lead, clamp(look.yaw, -1.1, 1.1), glance)
+        ht.pitch = lerp(0.14, look.pitch, glance)
+        ht.roll = 0.06 * glance
+        this.headSmooth = 0.4
+        this.lensGlowT = 0.15 + 0.3 * glance
         if (t >= pl.T + 0.35 && this.gaitIdle()) this.finish(P.ROBOT_ENTERING)
         break
       }
@@ -404,23 +452,21 @@ export class RobotController {
 
       case P.ROBOT_MOVING_ASIDE: {
         // A) notices the movement — small flinch, attention on the viewer
-        this.leanOffsetT = t < 0.55 ? -0.045 : t < 1.5 ? -0.02 : 0
-        // B) one small step backwards (feet follow through the gait planner)
-        const ub = easeInOutSine((t - 0.3) / 0.95)
-        this.pos.lerpVectors(pl.p0, pl.back, ub)
-        // C) politely moves aside to make room
-        const ul = clamp((t - 1.5) / pl.Tl, 0, 1)
-        if (ul > 0) this.pos.lerpVectors(pl.back, pl.aside, travelProfile(ul, 0.26, 0.36))
-        this.yaw = pl.yaw0 + angleDiff(pl.yaw0, pl.yawAside) * smootherstep(ul * 1.25)
+        this.leanOffsetT = t < 0.5 ? -0.04 : 0
+        // B) turns in place towards the free spot (the head lingers on the viewer)
+        const ut = easeInOutSine((t - pl.turnStart) / pl.Tt)
+        this.yaw = pl.yaw0 + pl.dYaw * ut
+        // C) walks forwards to make room, then settles
+        const uw = clamp((t - pl.walkStart) / pl.Tw, 0, 1)
+        this.pos.lerpVectors(pl.p0, pl.aside, travelProfile(uw, 0.22, 0.34))
         const look = this.lookAtCamera(ctx.camera)
-        const travel = angleDiff(this.yaw, Math.PI / 2)
-        const glance = 0.35 * Math.sin(Math.PI * ul)
-        ht.yaw = lerp(look.yaw, travel, glance)
-        ht.pitch = look.pitch
+        const away = smootherstep((t - pl.turnStart - pl.Tt * 0.45) / 0.8)
+        ht.yaw = lerp(clamp(look.yaw, -1.1, 1.1), 0, away)
+        ht.pitch = lerp(look.pitch, 0.12, away)
         ht.roll = 0
-        this.headSmooth = 0.3
-        this.lensGlowT = 0.45
-        if (t >= 1.5 + pl.Tl + 0.3 && this.gaitIdle()) this.finish(P.ROBOT_MOVING_ASIDE)
+        this.headSmooth = 0.32
+        this.lensGlowT = 0.45 - 0.3 * away
+        if (t >= pl.walkStart + pl.Tw + 0.3 && this.gaitIdle()) this.finish(P.ROBOT_MOVING_ASIDE)
         break
       }
 
@@ -496,7 +542,8 @@ export class RobotController {
       s.t = Math.min(1, s.t + dt / s.dur)
       const e = smootherstep(s.t)
       f.pos.lerpVectors(s.from, s.to, e)
-      f.pos.y = this.dim.ankleH + s.lift * Math.pow(Math.sin(Math.PI * s.t), 0.85)
+      // quick lift, crisp placement
+      f.pos.y = this.dim.ankleH + s.lift * Math.pow(Math.sin(Math.PI * Math.min(1, s.t * 1.06)), 0.7)
       f.yaw = s.fromYaw + angleDiff(s.fromYaw, s.toYaw) * e
       // toe lifts mid-swing, lands flat (ankle compensation)
       f.pitch = -0.2 * s.pitchAmt * Math.sin(Math.PI * Math.min(1, s.t * 1.08))
@@ -545,7 +592,7 @@ export class RobotController {
     if (pick < 0) return
 
     const f = this.feet[pick]
-    const dur = moving ? 0.5 : 0.42
+    const dur = moving ? 0.34 : 0.32
     const ahead = dur + (moving ? 0.5 * (dur + this.dsTime) : 0)
     const predPos = _v1.set(this.pos.x + this.vel.x * ahead, 0, this.pos.z + this.vel.z * ahead)
     const predYaw = this.yaw + this.yawRate * ahead * 0.85
@@ -577,7 +624,7 @@ export class RobotController {
       toYaw: predYaw,
       t: 0,
       dur,
-      lift: clamp(0.012 + dist * 0.24, 0.012, 0.045),
+      lift: clamp(0.016 + dist * 0.3, 0.016, 0.05),
       pitchAmt: clamp(dist / 0.12, 0.2, 1),
       impact: clamp(0.35 + dist / 0.15, 0.35, 1),
     }
@@ -604,8 +651,8 @@ export class RobotController {
     const t = this.time
 
     // weight shifts over the stance foot; pelvis twists with the swing leg
-    const shiftT = stanceSide * 0.011 * swingAmt + idle * 0.0045 * Math.sin(t * 0.42)
-    const rollT = -stanceSide * 0.026 * swingAmt - lat * 0.05 + idle * 0.003 * Math.sin(t * 0.61 + 1)
+    const shiftT = stanceSide * 0.013 * swingAmt + idle * 0.0045 * Math.sin(t * 0.42)
+    const rollT = -stanceSide * 0.034 * swingAmt - lat * 0.05 + idle * 0.003 * Math.sin(t * 0.61 + 1)
     const twistT = sw >= 0 ? -this.feet[sw].side * 0.04 * swingAmt * clamp(fwd / 0.3, -1, 1) : 0
     this.leanOffset.to(this.leanOffsetT, 0.25, dt)
     const leanT =
@@ -619,7 +666,11 @@ export class RobotController {
     this.lean.step(leanT, 60, 0.55, dt)
     this.bob.step(0, 170, 0.5, dt)
     this.lower.step(this.lowerTarget, 38, 0.72, dt)
-    this.walkLift = swingAmt * clamp(speed / 0.35, 0, 1) * 0.005
+    this.walkLift = swingAmt * clamp(speed / 0.35, 0, 1) * 0.006
+    const busy = Math.max(clamp(speed / 0.18, 0, 1), clamp(Math.abs(this.yawRate) / 0.8, 0, 1))
+    this.crouch.to(this.dim.crouch + this.dim.walkCrouch * busy, 0.3, dt)
+    // the head nods a little with every step
+    this.nod.to(swingAmt * 0.045 * clamp(speed / 0.2, 0, 1), 0.08, dt)
 
     for (let i = 0; i < 2; i++) {
       const side = this.feet[i].side
@@ -639,7 +690,7 @@ export class RobotController {
     r.root.position.set(this.pos.x, 0, this.pos.z)
     r.root.rotation.y = this.yaw
     const dim = this.dim
-    r.body.position.set(this.shift.value, dim.hipH - dim.crouch + this.bob.x + this.walkLift - dim.lowerDepth * low, 0)
+    r.body.position.set(this.shift.value, dim.hipH - this.crouch.value + this.bob.x + this.walkLift - dim.lowerDepth * low, 0)
     r.body.rotation.set(this.lean.x, this.twist.value, this.roll.value)
 
     // head & neck: targets are relative to the root heading; cancel body sway so the head stays stable
@@ -648,7 +699,7 @@ export class RobotController {
     this.headPitch.to(clamp(ht.pitch, -0.45, 0.5), this.headSmooth, dt)
     this.headRoll.to(clamp(ht.roll, -0.3, 0.3), this.headSmooth, dt)
     const hy = this.headYaw.value - this.twist.value
-    const hp = this.headPitch.value - this.lean.x
+    const hp = this.headPitch.value - this.lean.x + this.nod.value
     const hr = this.headRoll.value - this.roll.value
     const fold = clamp(low, 0, 1.2)
 

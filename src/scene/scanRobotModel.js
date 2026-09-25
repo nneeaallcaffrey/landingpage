@@ -50,16 +50,18 @@ export const SCAN_DIMS = {
   hipH: LEG.H.y,
   hipX: LEG.H.x,
   footX: LEG.H.x,
-  footZ: 0,
+  footZ: LEG.A.z, // standing pose = the model's own rest pose
   ankleH: toRobot(0, M.ankle[1], 0).y,
   thigh: LEG.thigh,
   shin: LEG.shin,
   kneeDir: -1,
-  crouch: 0.012,
+  crouch: 0,
+  walkCrouch: 0.04,
   lowerDepth: 0.07,
-  maxStep: 0.1,
-  speed: 0.8,
+  maxStep: 0.12,
+  speed: 0.9,
   headWidth: M.headWidth * SCAN_SCALE,
+  headTop: 0.89,
   neck: { base: 0, mid: 0, head: 0, foldBase: 0.35, foldMid: 0, foldHead: -0.2 },
 }
 
@@ -178,7 +180,7 @@ export async function loadScanRobot({ signal, timeoutMs = 15000 } = {}) {
     map.colorSpace = THREE.SRGBColorSpace
     map.anisotropy = 4
   }
-  const material = new THREE.MeshStandardMaterial({ map, roughness: 0.58, metalness: 0.06 })
+  const material = new THREE.MeshStandardMaterial({ map, roughness: 0.78, metalness: 0 })
   const parts = segment(source.geometry)
 
   source.geometry.dispose()

@@ -7,8 +7,8 @@ import IntroFX from './IntroFX'
 import { SCENE_PHASES as P, phaseIndex } from './phases'
 
 // Fixed observer: initialised once, never animated.
-const CAMERA = { position: [0, 0.52, 3.35], fov: 28, near: 0.1, far: 60 }
-const CAMERA_TARGET = new THREE.Vector3(0, 0.37, 0)
+const CAMERA = { position: [0, 0.62, 3.35], fov: 28, near: 0.05, far: 60 }
+const CAMERA_TARGET = new THREE.Vector3(0, 0.5, 0)
 // Neutral tone mapping keeps the whites white (ACES would grey the room down).
 const GL = { antialias: true, powerPreference: 'high-performance', toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }
 const ROOM_BG = '#f6f6f4'

@@ -59,11 +59,10 @@ function ScanLeg({ side, parts, material, rig, index, geo, mats }) {
     <group ref={rig.hips[index]} position={[side * hx, hy, hz]} rotation={[0, 0, 0, 'ZXY']}>
       <Part geometry={parts[`thigh${key}`]} material={material} />
       <group ref={rig.knees[index]} position={SCAN_LAYOUT.knee}>
-        <Cap geo={geo} mat={mats.joint} r={0.034} len={0.1} x={side * SCAN_LAYOUT.kneeCapX} />
-        <Cap geo={geo} mat={mats.steel} r={0.014} len={0.104} x={side * SCAN_LAYOUT.kneeCapX} />
+        <Cap geo={geo} mat={mats.joint} r={0.026} len={0.085} x={side * SCAN_LAYOUT.kneeCapX} />
         <Part geometry={parts[`shin${key}`]} material={material} />
         <group ref={rig.ankles[index]} position={SCAN_LAYOUT.ankle}>
-          <Cap geo={geo} mat={mats.joint} r={0.022} len={0.07} x={side * SCAN_LAYOUT.ankleCapX} />
+          <Cap geo={geo} mat={mats.joint} r={0.017} len={0.058} x={side * SCAN_LAYOUT.ankleCapX} />
           <Part geometry={parts[`foot${key}`]} material={material} />
         </group>
       </group>

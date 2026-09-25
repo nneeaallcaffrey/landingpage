@@ -5,6 +5,7 @@ import { RobotController } from './robotController'
 import { SCENE_PHASES as P, TIME_SCALE } from './phases'
 
 const _proj = new THREE.Vector3()
+const _ndc = new THREE.Vector3()
 
 export function robotScaleFor(size) {
   if (size.width < 640) return 0.8
@@ -46,6 +47,13 @@ export function useRobotRig({ phase, onPhaseDone, mouse, dims, lensMaterial }) {
   // Stage-space X of the right viewport edge at a given depth (the camera is static).
   const layout = useMemo(
     () => ({
+      /** NDC of a stage-space point (the stage sits at x = 0 until the hero is active). */
+      project(x, y, z) {
+        const { camera } = get()
+        const s = refs.stage.current ? refs.stage.current.scale.x : 1
+        camera.updateMatrixWorld()
+        return _ndc.set(x * s, y * s, z * s).project(camera)
+      },
       edgeX(z) {
         const { camera } = get()
         const s = refs.stage.current ? refs.stage.current.scale.x : 1
