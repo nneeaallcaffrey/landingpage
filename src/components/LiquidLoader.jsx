@@ -41,7 +41,11 @@ function wavePath(level, amp, k, phase) {
   return `${d} L ${x1} ${C + R_LIQ + 12} Z`
 }
 
-export default function LiquidLoader({ onComplete, introState }) {
+// Longest the loader waits for the robot model before carrying on (the robot
+// component falls back to the procedural robot on its own).
+const MAX_READY_WAIT_MS = 12000
+
+export default function LiquidLoader({ onComplete, introState, ready = true }) {
   const [percent, setPercent] = useState(1)
   const [critical, setCritical] = useState(false)
   const progress = useMotionValue(1)
@@ -49,6 +53,7 @@ export default function LiquidLoader({ onComplete, introState }) {
   const shown = useRef(1)
   const level = useRef(0.01)
   const onCompleteRef = useRef(onComplete)
+  const readyRef = useRef(ready)
 
   const groupRef = useRef()
   const arcRef = useRef()
@@ -66,6 +71,10 @@ export default function LiquidLoader({ onComplete, introState }) {
   useEffect(() => {
     onCompleteRef.current = onComplete
   }, [onComplete])
+
+  useEffect(() => {
+    readyRef.current = ready
+  }, [ready])
 
   useEffect(() => {
     let cancelled = false
@@ -88,13 +97,20 @@ export default function LiquidLoader({ onComplete, introState }) {
     ;(async () => {
       // 1 -> 20 -> 45 -> 70 -> 90 -> 100, eased rather than linear
       await run(
-        animate(progress, [1, 20, 45, 70, 90, 100], {
-          duration: TIMING.loaderProgress / ts,
+        animate(progress, [1, 20, 45, 70, 90], {
+          duration: (TIMING.loaderProgress * 0.87) / ts,
           delay: TIMING.loaderDelay / ts,
-          times: [0, 0.2, 0.44, 0.68, 0.87, 1],
-          ease: ['easeOut', 'easeInOut', 'easeInOut', 'easeInOut', 'easeOut'],
+          times: [0, 0.23, 0.51, 0.78, 1],
+          ease: ['easeOut', 'easeInOut', 'easeInOut', 'easeInOut'],
         }),
       )
+      // the last 10% waits for the robot model to be ready
+      const waitStart = performance.now()
+      while (!cancelled && !readyRef.current && performance.now() - waitStart < MAX_READY_WAIT_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 80))
+      }
+      if (cancelled) return
+      await run(animate(progress, 100, { duration: (TIMING.loaderProgress * 0.13) / ts, ease: 'easeOut' }))
       if (cancelled) return
       await run(animate(0, 1, { duration: TIMING.loaderHold / ts }))
       if (cancelled) return

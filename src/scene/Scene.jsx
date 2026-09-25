@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { ContactShadows, Environment, Lightformer } from '@react-three/drei'
 import * as THREE from 'three'
-import Robot from './Robot'
+import RobotActor from './RobotActor'
 import IntroFX from './IntroFX'
 import { SCENE_PHASES as P, phaseIndex } from './phases'
 
@@ -120,7 +120,7 @@ function StudioEnvironment() {
   )
 }
 
-export default function Scene({ phase, onPhaseDone, introState, mouse, quality, frameloop }) {
+export default function Scene({ phase, onPhaseDone, onRobotReady, introState, mouse, quality, frameloop }) {
   const showIntroFX = phaseIndex(phase) <= phaseIndex(P.ROOM_REVEAL)
   const heroActive = phase === P.HERO_ACTIVE
 
@@ -139,7 +139,7 @@ export default function Scene({ phase, onPhaseDone, introState, mouse, quality, 
       <Lights quality={quality} />
       <StudioEnvironment />
       <Room />
-      <Robot phase={phase} onPhaseDone={onPhaseDone} mouse={mouse} quality={quality}>
+      <RobotActor phase={phase} onPhaseDone={onPhaseDone} onReady={onRobotReady} mouse={mouse} quality={quality}>
         {/* soft contact shadow / AO under the feet; baked once the robot has settled */}
         <ContactShadows
           position={[0, 0.002, 0]}
@@ -151,7 +151,7 @@ export default function Scene({ phase, onPhaseDone, introState, mouse, quality, 
           color="#2a2f2c"
           frames={heroActive ? 1 : Infinity}
         />
-      </Robot>
+      </RobotActor>
       {showIntroFX && (
         <IntroFX phase={phase} introState={introState} onPhaseDone={onPhaseDone} count={quality.particles} />
       )}

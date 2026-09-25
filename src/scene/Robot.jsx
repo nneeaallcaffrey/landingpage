@@ -1,9 +1,8 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { createContext, useContext, useEffect, useMemo } from 'react'
 import { RoundedBox } from '@react-three/drei'
 import * as THREE from 'three'
-import { RobotController, DIM } from './robotController'
-import { SCENE_PHASES as P, TIME_SCALE } from './phases'
+import { DIM } from './robotController'
+import { useRobotRig } from './useRobotRig'
 
 /**
  * Procedural, fully articulated service robot modelled after the
@@ -258,103 +257,18 @@ function Torso({ mats, armRefs }) {
 
 /* ---------------------------------------------------------------------- */
 
-const _proj = new THREE.Vector3()
-
-function robotScaleFor(size) {
-  if (size.width < 640) return 0.8
-  if (size.width < 1024) return 0.9
-  return 1
-}
-
-export default function Robot({ phase, onPhaseDone, mouse, quality, children }) {
-  const stage = useRef()
-  const root = useRef()
-  const body = useRef()
-  const neckBase = useRef()
-  const neckMid = useRef()
-  const head = useRef()
-  const hipL = useRef()
-  const hipR = useRef()
-  const kneeL = useRef()
-  const kneeR = useRef()
-  const ankleL = useRef()
-  const ankleR = useRef()
-  const armL = useRef()
-  const armR = useRef()
-
+/** The original hand-modelled robot — used when the scanned model can't be loaded. */
+export function ProceduralRobot({ phase, onPhaseDone, mouse, quality, children }) {
   const mats = useRobotMaterials()
   const geo = useJointGeometries(quality.segs)
-  const get = useThree((s) => s.get)
-  const ctrl = useRef(null)
-  const onDoneRef = useRef(onPhaseDone)
-
-  useEffect(() => {
-    onDoneRef.current = onPhaseDone
-  }, [onPhaseDone])
-
-  // Stage-space X of the right viewport edge at a given depth (the camera is static).
-  const layout = useMemo(
-    () => ({
-      edgeX(z) {
-        const { camera } = get()
-        const s = stage.current ? stage.current.scale.x : 1
-        camera.updateMatrixWorld()
-        _proj.set(1, 0.4 * s, z * s).project(camera)
-        return 1 / Math.max(1e-3, _proj.x) / s
-      },
-    }),
-    [get],
-  )
-
-  useLayoutEffect(() => {
-    stage.current.scale.setScalar(robotScaleFor(get().size))
-    ctrl.current = new RobotController(
-      {
-        stage: stage.current,
-        root: root.current,
-        body: body.current,
-        neckBase: neckBase.current,
-        neckMid: neckMid.current,
-        head: head.current,
-        hips: [hipL.current, hipR.current],
-        knees: [kneeL.current, kneeR.current],
-        ankles: [ankleL.current, ankleR.current],
-        arms: [armL.current, armR.current],
-        lensMaterial: mats.lens,
-      },
-      { onPhaseDone: (p) => onDoneRef.current?.(p) },
-    )
-    return () => {
-      ctrl.current = null
-    }
-  }, [get, mats])
-
-  useLayoutEffect(() => {
-    ctrl.current?.setPhase(phase, layout)
-  }, [phase, layout])
-
-  useFrame((state, delta) => {
-    const c = ctrl.current
-    if (!c) return
-    const s = robotScaleFor(state.size)
-    if (stage.current.scale.x !== s) stage.current.scale.setScalar(s)
-    if (c.phase === P.HERO_ACTIVE) {
-      // Keep ~70% of the robot in frame if the viewport changes. The whole stage
-      // (robot + its baked contact shadow) shifts together, so nothing re-bakes.
-      const desired = c.asideX(layout, c.pos.z) * s
-      const current = stage.current.position.x + c.pos.x * s
-      if (Math.abs(desired - current) > 1e-3) stage.current.position.x += desired - current
-    }
-    const dt = Math.min(delta, 1 / 20) * TIME_SCALE
-    c.update(dt, { camera: state.camera, mouse: mouse.current, layout })
-  })
+  const rig = useRobotRig({ phase, onPhaseDone, mouse, lensMaterial: mats.lens })
 
   return (
     <QualityCtx.Provider value={quality}>
       <GeoCtx.Provider value={geo}>
-        <group ref={stage}>
-          <group ref={root}>
-            <group ref={body} position={[0, DIM.hipH, 0]} rotation={[0, 0, 0, 'YXZ']}>
+        <group ref={rig.stage}>
+          <group ref={rig.root}>
+            <group ref={rig.body} position={[0, DIM.hipH, 0]} rotation={[0, 0, 0, 'YXZ']}>
               {/* pelvis and hip actuator housings */}
               <Box size={[0.16, 0.06, 0.13]} r={0.014} mat={mats.dark} position={[0, 0.012, -0.004]} />
               {[1, -1].map((s) => (
@@ -364,22 +278,22 @@ export default function Robot({ phase, onPhaseDone, mouse, quality, children }) 
                 </group>
               ))}
 
-              <Torso mats={mats} armRefs={[armL, armR]} />
+              <Torso mats={mats} armRefs={rig.arms} />
 
-              <group ref={neckBase} position={[0, 0.262, -0.065]}>
+              <group ref={rig.neckBase} position={[0, 0.262, -0.065]}>
                 <Box size={[0.044, 0.09, 0.04]} r={0.01} mat={mats.dark} position={[0, 0.045, 0]} />
-                <group ref={neckMid} position={[0, 0.09, 0]}>
+                <group ref={rig.neckMid} position={[0, 0.09, 0]}>
                   <Joint r={0.022} len={0.056} mat={mats.steel} />
                   <Box size={[0.04, 0.08, 0.036]} r={0.01} mat={mats.dark} position={[0, 0.04, 0]} />
                   <group position={[0, 0.08, 0]}>
                     <Joint r={0.02} len={0.05} mat={mats.dark} />
-                    <Head mats={mats} headRef={head} />
+                    <Head mats={mats} headRef={rig.head} />
                   </group>
                 </group>
               </group>
 
-              <Leg side={1} mats={mats} hipRef={hipL} kneeRef={kneeL} ankleRef={ankleL} />
-              <Leg side={-1} mats={mats} hipRef={hipR} kneeRef={kneeR} ankleRef={ankleR} />
+              <Leg side={1} mats={mats} hipRef={rig.hips[0]} kneeRef={rig.knees[0]} ankleRef={rig.ankles[0]} />
+              <Leg side={-1} mats={mats} hipRef={rig.hips[1]} kneeRef={rig.knees[1]} ankleRef={rig.ankles[1]} />
             </group>
           </group>
           {children}

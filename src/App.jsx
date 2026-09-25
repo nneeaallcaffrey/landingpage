@@ -47,6 +47,7 @@ export default function App() {
   const [phase, setPhase] = useState(INITIAL_PHASE)
   const [quality] = useState(detectQuality)
   const [frameloop, setFrameloop] = useState('always')
+  const [robotReady, setRobotReady] = useState(false)
   const introState = useRef({ collapse: 0 })
   const mouse = useRef({ x: 0, y: 0 })
   const phaseRef = useRef(phase)
@@ -59,6 +60,7 @@ export default function App() {
     setPhase((current) => (current === from ? nextPhase(from) : current))
   }, [])
   const handleLoaderComplete = useCallback(() => handlePhaseDone(SCENE_PHASES.LOADING), [handlePhaseDone])
+  const handleRobotReady = useCallback(() => setRobotReady(true), [])
 
   useEffect(() => {
     phaseRef.current = phase
@@ -170,6 +172,7 @@ export default function App() {
         <Scene
           phase={phase}
           onPhaseDone={handlePhaseDone}
+          onRobotReady={handleRobotReady}
           introState={introState.current}
           mouse={mouse}
           quality={quality}
@@ -179,7 +182,7 @@ export default function App() {
 
       {phase === SCENE_PHASES.LOADING && (
         <div className="fixed inset-0 z-30 flex items-center justify-center pointer-events-none" role="status" aria-label="Loading">
-          <LiquidLoader onComplete={handleLoaderComplete} introState={introState.current} />
+          <LiquidLoader onComplete={handleLoaderComplete} introState={introState.current} ready={robotReady} />
         </div>
       )}
 

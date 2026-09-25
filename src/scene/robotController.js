@@ -12,6 +12,7 @@ import { SCENE_PHASES as P } from './phases'
  * the robot faces +Z (towards the camera) when yaw = 0. Robot-left is +X.
  */
 
+/** Proportions of the procedural robot. A rig can override any of these. */
 export const DIM = {
   ankleH: 0.06, // ankle pivot height above the floor
   thigh: 0.125,
@@ -19,7 +20,15 @@ export const DIM = {
   hipH: 0.27, // hip pivot height when standing
   hipX: 0.075, // hip pivot lateral offset
   footX: 0.08, // neutral foot lateral offset
+  footZ: 0, // neutral ankle position along the heading
+  kneeDir: 1, // 1: knee bends forward, -1: reverse (digitigrade) knee
+  crouch: 0, // extra hip drop while standing / walking
+  lowerDepth: 0.1, // hip drop when the robot lowers itself
+  maxStep: 0.14,
+  speed: 1, // walking speed multiplier
   headWidth: 0.37,
+  // neck chain rest angles (base, mid, head) and how they fold when lowering
+  neck: { base: 0.3, mid: -0.6, head: 0.3, foldBase: 0.55, foldMid: -0.8, foldHead: 0.25 },
 }
 
 export const MAX_HEAD_YAW = THREE.MathUtils.degToRad(15)
@@ -122,6 +131,7 @@ export class RobotController {
   constructor(rig, opts) {
     this.rig = rig
     this.onPhaseDone = opts.onPhaseDone
+    this.dim = { ...DIM, ...opts.dims, neck: { ...DIM.neck, ...opts.dims?.neck } }
     this.phase = null
     this.pt = 0
     this.time = 0
@@ -178,10 +188,10 @@ export class RobotController {
   /* ------------------------------------------------------------------ */
 
   neutral(i, pos, yaw, out) {
-    out.set(this.feet[i].side * DIM.footX, 0, 0).applyAxisAngle(UP, yaw)
+    out.set(this.feet[i].side * this.dim.footX, 0, this.dim.footZ).applyAxisAngle(UP, yaw)
     out.x += pos.x
     out.z += pos.z
-    out.y = DIM.ankleH
+    out.y = this.dim.ankleH
     return out
   }
 
@@ -231,7 +241,7 @@ export class RobotController {
         plan.yawWalk = Math.atan2(end.x - start.x, end.z - start.z)
         plan.yawEnd = 0.22
         // Peak walking speed ~0.38 m/s: slow, heavy and deliberate.
-        plan.T = Math.max(2.8, (dist * 1.34) / 0.38)
+        plan.T = Math.max(2.8, (dist * 1.34) / (0.38 * this.dim.speed))
         this.placeStanding(start.x, start.z, plan.yawWalk)
         this.stepping = true
         this.headYaw.set(0)
@@ -250,7 +260,7 @@ export class RobotController {
         const zAside = -0.3
         plan.aside = new THREE.Vector3(this.asideX(layout, zAside), 0, zAside)
         plan.yawAside = 0.45
-        plan.Tl = Math.max(1.6, (plan.back.distanceTo(plan.aside) * 1.43) / 0.32)
+        plan.Tl = Math.max(1.6, (plan.back.distanceTo(plan.aside) * 1.43) / (0.32 * this.dim.speed))
         break
       }
       case P.ROBOT_FACING_WALL: {
@@ -267,7 +277,7 @@ export class RobotController {
 
   /** Stage-space X that leaves ~70% of the robot's silhouette inside the frame. */
   asideX(layout, z) {
-    return layout.edgeX(z) - 0.22 * DIM.headWidth
+    return layout.edgeX(z) - 0.22 * this.dim.headWidth
   }
 
   finish(phase) {
@@ -486,7 +496,7 @@ export class RobotController {
       s.t = Math.min(1, s.t + dt / s.dur)
       const e = smootherstep(s.t)
       f.pos.lerpVectors(s.from, s.to, e)
-      f.pos.y = DIM.ankleH + s.lift * Math.pow(Math.sin(Math.PI * s.t), 0.85)
+      f.pos.y = this.dim.ankleH + s.lift * Math.pow(Math.sin(Math.PI * s.t), 0.85)
       f.yaw = s.fromYaw + angleDiff(s.fromYaw, s.toYaw) * e
       // toe lifts mid-swing, lands flat (ankle compensation)
       f.pitch = -0.2 * s.pitchAmt * Math.sin(Math.PI * Math.min(1, s.t * 1.08))
@@ -545,7 +555,7 @@ export class RobotController {
     const n0 = this.neutral(pick, this.pos, this.yaw, _v2)
     const off = _v3.copy(target).sub(n0)
     off.y = 0
-    if (off.length() > 0.14) off.setLength(0.14)
+    if (off.length() > this.dim.maxStep) off.setLength(this.dim.maxStep)
     target.copy(n0).add(off)
 
     // never let the feet cross (important when side-stepping)
@@ -553,7 +563,7 @@ export class RobotController {
     if (f.side > 0) local.x = Math.max(local.x, 0.045)
     else local.x = Math.min(local.x, -0.045)
     local.applyAxisAngle(UP, predYaw)
-    target.set(predPos.x + local.x, DIM.ankleH, predPos.z + local.z)
+    target.set(predPos.x + local.x, this.dim.ankleH, predPos.z + local.z)
 
     const dist = Math.hypot(target.x - f.pos.x, target.z - f.pos.z)
     if (dist < 0.006 && Math.abs(angleDiff(f.yaw, predYaw)) < 0.05) {
@@ -628,7 +638,8 @@ export class RobotController {
 
     r.root.position.set(this.pos.x, 0, this.pos.z)
     r.root.rotation.y = this.yaw
-    r.body.position.set(this.shift.value, DIM.hipH + this.bob.x + this.walkLift - 0.1 * low, 0)
+    const dim = this.dim
+    r.body.position.set(this.shift.value, dim.hipH - dim.crouch + this.bob.x + this.walkLift - dim.lowerDepth * low, 0)
     r.body.rotation.set(this.lean.x, this.twist.value, this.roll.value)
 
     // head & neck: targets are relative to the root heading; cancel body sway so the head stays stable
@@ -643,10 +654,10 @@ export class RobotController {
 
     r.neckBase.quaternion
       .setFromAxisAngle(Y_AXIS, hy * 0.3)
-      .multiply(_q1.setFromAxisAngle(X_AXIS, 0.3 + 0.55 * fold + hp * 0.25))
-    r.neckMid.rotation.set(-0.6 - 0.8 * fold, 0, 0)
+      .multiply(_q1.setFromAxisAngle(X_AXIS, dim.neck.base + dim.neck.foldBase * fold + hp * 0.25))
+    r.neckMid.rotation.set(dim.neck.mid + dim.neck.foldMid * fold, 0, 0)
     r.head.quaternion
-      .setFromAxisAngle(X_AXIS, 0.3 + 0.25 * fold)
+      .setFromAxisAngle(X_AXIS, dim.neck.head + dim.neck.foldHead * fold)
       .multiply(_q1.setFromAxisAngle(Y_AXIS, hy * 0.7))
       .multiply(_q2.setFromAxisAngle(X_AXIS, hp * 0.75))
       .multiply(_q3.setFromAxisAngle(Z_AXIS, hr))
@@ -669,8 +680,9 @@ export class RobotController {
     const hip = r.hips[i]
     const knee = r.knees[i]
     const ankle = r.ankles[i]
-    const L1 = DIM.thigh
-    const L2 = DIM.shin
+    const L1 = this.dim.thigh
+    const L2 = this.dim.shin
+    const kneeDir = this.dim.kneeDir
 
     const v = _v1.copy(f.pos).applyMatrix4(toBody).sub(hip.position)
     const roll = Math.atan2(v.x, -v.y)
@@ -680,10 +692,11 @@ export class RobotController {
     const alpha = Math.atan2(fwd, down)
     const beta = Math.acos(clamp((L1 * L1 + D * D - L2 * L2) / (2 * L1 * D), -1, 1))
     const gamma = Math.acos(clamp((L2 * L2 + D * D - L1 * L1) / (2 * L2 * D), -1, 1))
-    const thigh = alpha + beta // knee points forward
+    // kneeDir 1: knee ahead of the hip-ankle line; -1: behind it (reverse knee)
+    const thigh = alpha + kneeDir * beta
 
     hip.rotation.set(-thigh, 0, roll)
-    knee.rotation.set(beta + gamma, 0, 0)
+    knee.rotation.set(kneeDir * (beta + gamma), 0, 0)
 
     // ankle keeps the sole flat on the floor (plus toe pitch while swinging)
     knee.getWorldQuaternion(_q1).invert()
