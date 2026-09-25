@@ -6,6 +6,8 @@ A visitor enters an empty white robotics test room. A small service robot notice
 
 ## Run it
 
+Requires Node `^20.19` or `>=22.12` (Vite 8).
+
 ```bash
 npm install
 npm run dev      # http://localhost:5173
@@ -40,7 +42,11 @@ A phase can only advance from itself, so every transition happens exactly once.
 | `src/components/LiquidLoader.jsx` | SVG liquid loader 1% → 100%, then vibrate / contract / brighten |
 | `src/scene/Scene.jsx` | Canvas, fixed camera, studio lighting, white room, contact shadows |
 | `src/scene/IntroFX.jsx` | Full-frame veil + white star-particle burst (custom shaders) |
-| `src/scene/Robot.jsx` | Procedural, fully articulated robot (every joint is its own pivot) |
+| `src/scene/RobotActor.jsx` | Loads the Higgsfield robot; falls back to the procedural one if it can't be downloaded |
+| `src/scene/scanRobotModel.js` | Downloads the Higgsfield mesh and cuts it into rigid, pivot-relative parts |
+| `src/scene/ScanRobot.jsx` | The Higgsfield robot on the articulated rig (joint caps, 15 cm ear antennas) |
+| `src/scene/Robot.jsx` | Procedural fallback robot (every joint is its own pivot) |
+| `src/scene/useRobotRig.js` | Connects any rig to the controller (phases, frame loop, resize handling) |
 | `src/scene/robotController.js` | Footstep planner, 2-bone leg IK, body dynamics, head/neck control, choreography |
 | `src/components/Navbar.jsx` | Navbar + mobile menu |
 | `src/components/Hero.jsx` | Typewriter headline, description, multi-select service pills |
@@ -56,10 +62,12 @@ A phase can only advance from itself, so every transition happens exactly once.
 
 ## Robot design & Higgsfield
 
-The robot follows the supplied white / blue bipedal service-robot references:
-- a wide, flat sensor head with two gold-rimmed optical sensors and a 15 cm antenna rising from the "ear" housing on each side
-- a dark two-joint neck
-- a boxy white torso with blue lower panels, side emblems and cable loops
-- short legs with large dark knee actuators and big wedge feet
+The robot is the **first model generated with Higgsfield** (SAM 3D) from the white / blue bipedal service-robot reference. It's a single textured mesh, so at load time `scanRobotModel.js` cuts it into rigid parts:
+- torso
+- neck
+- head
+- thighs, shins and feet
 
-The references were brought in with **Higgsfield**, which also generated 3D meshes from them with SAM 3D. Those meshes come back as one fused, unrigged surface, so the head and legs can't move independently. They were used as a design reference. The site builds its own articulated robot from separate parts so every joint can animate.
+Each part hangs off the articulated rig at landmarks measured on the mesh: hips, a reverse (digitigrade) knee, ankles, the neck base and the head pivot. Dark joint caps hide the cuts, and a 15 cm antenna rises from the "ear" on each side of the head.
+
+The mesh is loaded at runtime from the Higgsfield CDN (`SCAN_URL`, CORS-enabled, immutable). The intro loader holds at 90% until it's ready. If the download fails or takes longer than 15 s, the hand-modelled procedural robot takes over automatically, running the same animation system.
