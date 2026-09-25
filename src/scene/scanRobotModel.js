@@ -166,14 +166,14 @@ function buildSkinnedGeometry(source) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Texture clean-up: flat white / blue / graphite palette, no dirt specks      */
+/* Repaint: flat white / blue / graphite palette decided on the 3D surface     */
 /* -------------------------------------------------------------------------- */
 
 const PALETTE = [
   [233, 236, 239], // 0 white shell
   [34, 119, 198], // 1 blue panels
-  [93, 98, 104], // 2 graphite (head panels, neck)
-  [36, 39, 43], // 3 dark joints / sensors
+  [93, 98, 104], // 2 graphite (face plate)
+  [36, 39, 43], // 3 dark joints / display / neck
   [224, 150, 46], // 4 amber accents
 ]
 
@@ -182,112 +182,180 @@ function classify(r, g, b) {
   const sat = Math.max(r, g, b) - Math.min(r, g, b)
   if (b > r + 22 && b >= g - 4) return 1
   if (r > b + 45 && r >= g && sat > 50) return 4
-  if (lum >= 140) return 0
-  if (lum >= 62) return 2
+  if (lum >= 105) return 0 // light grey is baked shading on the white shell
+  if (lum >= 55) return 2
   return 3
 }
 
 /**
- * Repaints the scan's texture with the clean palette. A majority filter
- * removes small specks (the "dirt"), and colours are grown past the UV
- * islands so mip-mapping never bleeds dark borders.
+ * Repaints the scan's texture with the clean palette. The scan's UV atlas is
+ * cut into hundreds of small islands, so filtering the image itself leaves
+ * specks and dark seams. Instead every surface vertex votes on its colour
+ * (from the texels around it, smoothed over its mesh neighbours), and each
+ * triangle is repainted from its vertices' votes: flat colours, crisp edges,
+ * no dirt, and both sides of every UV seam agree.
  */
-function cleanTexture(image, geometry, size) {
-  const W = size
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = W
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
-  ctx.drawImage(image, 0, 0, W, W)
-  const src = ctx.getImageData(0, 0, W, W)
-
-  // UV coverage mask
-  const maskCanvas = document.createElement('canvas')
-  maskCanvas.width = maskCanvas.height = W
-  const mctx = maskCanvas.getContext('2d', { willReadFrequently: true })
-  mctx.fillStyle = '#fff'
-  mctx.strokeStyle = '#fff'
-  mctx.lineWidth = 1.5
+function paintTexture(image, geometry, size) {
+  const K = PALETTE.length
+  const pos = geometry.getAttribute('position')
   const uv = geometry.getAttribute('uv')
   const index = geometry.getIndex()
-  for (let t = 0; t < index.count; t += 3) {
-    const a = index.getX(t)
-    const b = index.getX(t + 1)
-    const c = index.getX(t + 2)
-    // one path per triangle so overlapping (mirrored) UV islands never cancel out
-    mctx.beginPath()
-    mctx.moveTo(uv.getX(a) * W, uv.getY(a) * W)
-    mctx.lineTo(uv.getX(b) * W, uv.getY(b) * W)
-    mctx.lineTo(uv.getX(c) * W, uv.getY(c) * W)
-    mctx.closePath()
-    mctx.fill()
-    mctx.stroke()
-  }
-  const mask = mctx.getImageData(0, 0, W, W).data
+  const T = index.count / 3
 
-  const N = W * W
-  const K = PALETTE.length
-  const label = new Uint8Array(N).fill(255)
-  for (let i = 0; i < N; i++) {
-    if (mask[i * 4 + 3] > 0) label[i] = classify(src.data[i * 4], src.data[i * 4 + 1], src.data[i * 4 + 2])
+  // source texels
+  const S = image.width
+  const srcCanvas = document.createElement('canvas')
+  srcCanvas.width = srcCanvas.height = S
+  const sctx = srcCanvas.getContext('2d', { willReadFrequently: true })
+  sctx.drawImage(image, 0, 0, S, S)
+  const src = sctx.getImageData(0, 0, S, S).data
+  const classAt = (u, v) => {
+    const x = Math.min(S - 1, Math.max(0, Math.floor(u * S)))
+    const y = Math.min(S - 1, Math.max(0, Math.floor(v * S)))
+    const i = (y * S + x) * 4
+    return classify(src[i], src[i + 1], src[i + 2])
   }
 
-  // majority vote in a (2r+1)^2 window via one integral image per palette entry
-  const r = W >= 1024 ? 3 : 2
-  const S = W + 1
-  const integrals = []
-  for (let k = 0; k < K; k++) {
-    const I = new Int32Array(S * S)
-    for (let y = 0; y < W; y++) {
-      let row = 0
-      for (let x = 0; x < W; x++) {
-        if (label[y * W + x] === k) row++
-        I[(y + 1) * S + x + 1] = I[y * S + x + 1] + row
-      }
+  // vertices merged by position (UV seams split them in the source mesh)
+  const ids = new Map()
+  const vid = new Int32Array(pos.count)
+  for (let i = 0; i < pos.count; i++) {
+    const key = `${Math.round(pos.getX(i) * 1e5)},${Math.round(pos.getY(i) * 1e5)},${Math.round(pos.getZ(i) * 1e5)}`
+    let id = ids.get(key)
+    if (id === undefined) ids.set(key, (id = ids.size))
+    vid[i] = id
+  }
+  const NV = ids.size
+
+  // each triangle votes with 7 texels, weighted by its surface area
+  const votes = new Float32Array(NV * K)
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const tri = new THREE.Triangle()
+  const hist = new Float32Array(K)
+  const SAMPLES = [
+    [1 / 3, 1 / 3],
+    [5 / 9, 2 / 9],
+    [2 / 9, 5 / 9],
+    [2 / 9, 2 / 9],
+    [4 / 9, 4 / 9],
+    [1 / 9, 4 / 9],
+    [4 / 9, 1 / 9],
+  ]
+  for (let t = 0; t < T; t++) {
+    const i0 = index.getX(t * 3)
+    const i1 = index.getX(t * 3 + 1)
+    const i2 = index.getX(t * 3 + 2)
+    tri.set(a.fromBufferAttribute(pos, i0), b.fromBufferAttribute(pos, i1), c.fromBufferAttribute(pos, i2))
+    const w = tri.getArea() / SAMPLES.length
+    hist.fill(0)
+    for (const [s1, s2] of SAMPLES) {
+      const s0 = 1 - s1 - s2
+      const u = s0 * uv.getX(i0) + s1 * uv.getX(i1) + s2 * uv.getX(i2)
+      const v = s0 * uv.getY(i0) + s1 * uv.getY(i1) + s2 * uv.getY(i2)
+      hist[classAt(u, v)] += w
     }
-    integrals.push(I)
+    for (const i of [i0, i1, i2]) for (let k = 0; k < K; k++) votes[vid[i] * K + k] += hist[k]
   }
-  const out = new Uint8Array(N).fill(255)
-  for (let y = 0; y < W; y++) {
-    const y0 = Math.max(0, y - r)
-    const y1 = Math.min(W, y + r + 1)
-    for (let x = 0; x < W; x++) {
-      const i = y * W + x
-      if (label[i] === 255) continue
-      const x0 = Math.max(0, x - r)
-      const x1 = Math.min(W, x + r + 1)
-      let best = label[i]
-      let bestCount = -1
-      for (let k = 0; k < K; k++) {
-        const I = integrals[k]
-        const count = I[y1 * S + x1] - I[y0 * S + x1] - I[y1 * S + x0] + I[y0 * S + x0]
-        if (count > bestCount) {
-          bestCount = count
-          best = k
+
+  // one smoothing pass over mesh neighbours removes isolated specks
+  const edges = new Set()
+  for (let t = 0; t < T; t++) {
+    for (let e = 0; e < 3; e++) {
+      const p = vid[index.getX(t * 3 + e)]
+      const q = vid[index.getX(t * 3 + ((e + 1) % 3))]
+      if (p !== q) edges.add(p < q ? p * NV + q : q * NV + p)
+    }
+  }
+  const smoothed = votes.slice()
+  for (const e of edges) {
+    const p = Math.floor(e / NV)
+    const q = e - p * NV
+    for (let k = 0; k < K; k++) {
+      smoothed[p * K + k] += 0.5 * votes[q * K + k]
+      smoothed[q * K + k] += 0.5 * votes[p * K + k]
+    }
+  }
+  for (let v = 0; v < NV; v++) {
+    let sum = 0
+    for (let k = 0; k < K; k++) sum += smoothed[v * K + k]
+    if (sum > 0) for (let k = 0; k < K; k++) smoothed[v * K + k] /= sum
+  }
+
+  // repaint every triangle in UV space from its vertices' votes
+  const W = size
+  const label = new Uint8Array(W * W).fill(255)
+  for (let t = 0; t < T; t++) {
+    const i0 = index.getX(t * 3)
+    const i1 = index.getX(t * 3 + 1)
+    const i2 = index.getX(t * 3 + 2)
+    const ax = uv.getX(i0) * W
+    const ay = uv.getY(i0) * W
+    const bx = uv.getX(i1) * W
+    const by = uv.getY(i1) * W
+    const cx = uv.getX(i2) * W
+    const cy = uv.getY(i2) * W
+    const den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if (Math.abs(den) < 1e-9) continue
+    const eps = 0.75 / Math.max(Math.sqrt(Math.abs(den)), 1) // include texels touching the edges
+    const v0 = vid[i0] * K
+    const v1 = vid[i1] * K
+    const v2 = vid[i2] * K
+    const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx)))
+    const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cx)))
+    const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy)))
+    const y1 = Math.min(W - 1, Math.ceil(Math.max(ay, by, cy)))
+    for (let y = y0; y <= y1; y++) {
+      const py = y + 0.5
+      for (let x = x0; x <= x1; x++) {
+        const px = x + 0.5
+        const l0 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / den
+        const l1 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / den
+        const l2 = 1 - l0 - l1
+        if (l0 < -eps || l1 < -eps || l2 < -eps) continue
+        const w0 = Math.min(1, Math.max(0, l0))
+        const w1 = Math.min(1, Math.max(0, l1))
+        const w2 = Math.min(1, Math.max(0, l2))
+        let best = 0
+        let bestP = -1
+        for (let k = 0; k < K; k++) {
+          const p = w0 * smoothed[v0 + k] + w1 * smoothed[v1 + k] + w2 * smoothed[v2 + k]
+          if (p > bestP) {
+            bestP = p
+            best = k
+          }
         }
-      }
-      out[i] = best
-    }
-  }
-
-  // grow colours outwards past the islands (prevents dark seams)
-  for (let pass = 0; pass < 4; pass++) {
-    const prev = out.slice()
-    for (let y = 1; y < W - 1; y++) {
-      for (let x = 1; x < W - 1; x++) {
-        const i = y * W + x
-        if (prev[i] !== 255) continue
-        const n = prev[i - 1] !== 255 ? prev[i - 1] : prev[i + 1] !== 255 ? prev[i + 1] : prev[i - W] !== 255 ? prev[i - W] : prev[i + W]
-        if (n !== 255) out[i] = n
+        label[y * W + x] = best
       }
     }
   }
 
+  // gutters take the nearest painted colour so mip-maps never bleed
+  const queue = new Int32Array(W * W)
+  let head = 0
+  let tail = 0
+  for (let i = 0; i < W * W; i++) if (label[i] !== 255) queue[tail++] = i
+  while (head < tail) {
+    const i = queue[head++]
+    const x = i % W
+    for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
+      if (j >= 0 && j < W * W && label[j] === 255) {
+        label[j] = label[i]
+        queue[tail++] = j
+      }
+    }
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = W
+  const ctx = canvas.getContext('2d')
   const dst = ctx.createImageData(W, W)
-  for (let i = 0; i < N; i++) {
-    const c = PALETTE[out[i] === 255 ? 0 : out[i]]
-    dst.data[i * 4] = c[0]
-    dst.data[i * 4 + 1] = c[1]
-    dst.data[i * 4 + 2] = c[2]
+  for (let i = 0; i < W * W; i++) {
+    const col = PALETTE[label[i] === 255 ? 0 : label[i]]
+    dst.data[i * 4] = col[0]
+    dst.data[i * 4 + 1] = col[1]
+    dst.data[i * 4 + 2] = col[2]
     dst.data[i * 4 + 3] = 255
   }
   ctx.putImageData(dst, 0, 0)
@@ -316,7 +384,7 @@ export async function loadScanRobot({ signal, timeoutMs = 30000, textureSize = 1
   if (!source) throw new Error('scan robot: no mesh')
 
   const srcMap = source.material?.map
-  const map = srcMap?.image ? cleanTexture(srcMap.image, source.geometry, textureSize) : null
+  const map = srcMap?.image ? paintTexture(srcMap.image, source.geometry, textureSize) : null
   const material = new THREE.MeshStandardMaterial({
     map,
     // a little self-illumination keeps the white shell reading white
