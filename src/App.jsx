@@ -11,7 +11,7 @@ function detectQuality() {
   const tier = w < 640 ? 'mobile' : w < 1024 ? 'tablet' : 'desktop'
   return {
     tier,
-    particles: tier === 'mobile' ? 160 : tier === 'tablet' ? 280 : 440,
+    particles: tier === 'mobile' ? 240 : tier === 'tablet' ? 420 : 640,
     shadowMap: tier === 'mobile' ? 512 : 1024,
     contactRes: tier === 'mobile' ? 128 : 256,
     dpr: [1, tier === 'mobile' ? 1.25 : 1.5],

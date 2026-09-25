@@ -15,8 +15,8 @@ const ROOM_BG = '#f6f6f4'
 const WALL_Z = -2.4
 // The room is flat-shaded (no lighting maths on the pixels that fill the screen);
 // only the robot's shadow is drawn on top of the floor.
-const WALL_COLOR = '#f2f2f0'
-const FLOOR_COLOR = '#ededeb'
+const WALL_COLOR = '#efefed'
+const FLOOR_COLOR = '#f2f2f0'
 
 /**
  * Aims the camera once, before any sibling reads it. After this the camera is
