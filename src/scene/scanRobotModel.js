@@ -15,7 +15,7 @@ export const SCAN_URL =
 // Landmarks measured on the source mesh (model units: 1.0 tall, soles at
 // y = -0.5, facing +Z, symmetric in X). Legs have a reverse (digitigrade) knee.
 const M = {
-  hip: [0.225, -0.2, -0.115],
+  hip: [0.21, -0.06, -0.025], // axle hub: the whole side housing swings with the leg
   knee: [0.205, -0.325, -0.13],
   ankle: [0.178, -0.435, 0.02],
   neckBase: [0, 0.19, 0.075],
@@ -46,6 +46,7 @@ const HEAD_PIVOT = toRobot(...M.headPivot)
 /** Rig proportions for the controller (see DIM in robotController). */
 export const SCAN_DIMS = {
   hipH: LEG.H.y,
+  waistH: toRobot(0, -0.2, 0).y, // bottom of the body box (close-up framing)
   hipX: LEG.H.x,
   footX: LEG.H.x,
   footZ: LEG.A.z, // standing pose = the model's own rest pose
@@ -104,24 +105,37 @@ const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t)
 }
 
+// Plane between thigh and shin through the knee, bisecting the two segments,
+// so the blend follows the joint's crease instead of cutting straight across.
+const KNEE_PLANE = (() => {
+  const t = new THREE.Vector2(M.knee[1] - M.hip[1], M.knee[2] - M.hip[2]).normalize()
+  const s = new THREE.Vector2(M.ankle[1] - M.knee[1], M.ankle[2] - M.knee[2]).normalize()
+  return t.add(s).normalize() // (y, z)
+})()
+
 /** Smooth bone weights for one vertex (model units). Returns [[bone, weight], ...]. */
-function weightsFor(x, y) {
+function weightsFor(x, y, z) {
   const ax = Math.abs(x)
   // head is the only thing wider than the neck above the torso
   if (y > 0.2 && ax >= 0.1) return [[B.head, 1]]
-  if (y > 0.175 && ax < 0.1) {
-    const toNeck = smooth(0.175, 0.205, y)
-    const toHead = smooth(0.29, 0.325, y)
+  if (y > 0.165 && ax < 0.1) {
+    // the neck bends smoothly along its length
+    const toNeck = smooth(0.17, 0.235, y)
+    const toHead = smooth(0.265, 0.33, y)
     return [
       [B.torso, 1 - toNeck],
       [B.neck, toNeck * (1 - toHead)],
       [B.head, toNeck * toHead],
     ]
   }
-  // torso -> leg (hip housings on the sides, everything below the torso)
-  const leg = Math.max(smooth(0.105, 0.14, ax) * smooth(-0.165, -0.205, y), smooth(-0.225, -0.255, y))
-  const knee = smooth(-0.305, -0.345, y)
-  const ankle = smooth(-0.42, -0.45, y)
+  // The side housings (outside the body box, below the brackets) and
+  // everything under the body box (bottom at y = -0.216) belong to the legs.
+  // The split runs through the gap between box and housing, so the housing
+  // swings with the leg as one rigid piece around its axle hub.
+  const leg = Math.max(smooth(0.158, 0.17, ax) * smooth(0.012, -0.012, y), smooth(-0.216, -0.232, y))
+  const d = (y - M.knee[1]) * KNEE_PLANE.x + (z - M.knee[2]) * KNEE_PLANE.y
+  const knee = smooth(-0.022, 0.032, d)
+  const ankle = smooth(-0.4, -0.447, y) // the shin's foot end bends softly into the ankle
   const s = x >= 0 ? 'L' : 'R'
   return [
     [B.torso, 1 - leg],
@@ -142,9 +156,10 @@ function buildSkinnedGeometry(source) {
   for (let i = 0; i < n; i++) {
     const x = pos.getX(i)
     const y = pos.getY(i)
-    v.copy(toRobot(x, y, pos.getZ(i)))
+    const z = pos.getZ(i)
+    v.copy(toRobot(x, y, z))
     positions.set([v.x, v.y, v.z], i * 3)
-    const w = weightsFor(x, y)
+    const w = weightsFor(x, y, z)
       .filter(([, wt]) => wt > 1e-4)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 4)

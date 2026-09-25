@@ -314,7 +314,7 @@ export class RobotController {
       }
       return lo
     }
-    const waist = search((z) => -layout.project(0, d.hipH, z).y - 0.9) // hip on the bottom edge
+    const waist = search((z) => -layout.project(0, d.waistH ?? d.hipH, z).y - 0.9) // waist on the bottom edge
     const fitW = search((z) => layout.project(d.headWidth / 2, d.headTop, z).x - 0.86)
     const fitH = search((z) => layout.project(0, d.headTop, z).y - 0.96)
     return Math.min(waist, fitW, fitH)
