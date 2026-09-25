@@ -12,9 +12,9 @@ function detectQuality() {
   return {
     tier,
     particles: tier === 'mobile' ? 160 : tier === 'tablet' ? 280 : 440,
-    shadowMap: tier === 'mobile' ? 1024 : 2048,
-    contactRes: tier === 'mobile' ? 512 : 1024,
-    dpr: [1, tier === 'mobile' ? 1.5 : 1.75],
+    shadowMap: tier === 'mobile' ? 512 : 1024,
+    contactRes: tier === 'mobile' ? 128 : 256,
+    dpr: [1, tier === 'mobile' ? 1.25 : 1.5],
     smooth: tier === 'mobile' ? 2 : 3,
     segs: tier === 'mobile' ? 14 : 28,
     detail: tier !== 'mobile',
@@ -48,7 +48,7 @@ export default function App() {
   const [quality] = useState(detectQuality)
   const [frameloop, setFrameloop] = useState('always')
   const [robotReady, setRobotReady] = useState(false)
-  const introState = useRef({ collapse: 0 })
+  const introState = useRef({ collapse: 0, dark: 0 })
   const mouse = useRef({ x: 0, y: 0 })
   const phaseRef = useRef(phase)
   const transitionTriggered = useRef(false)

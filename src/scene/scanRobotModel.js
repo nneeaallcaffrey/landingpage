@@ -22,6 +22,8 @@ const M = {
   neckBase: [0, 0.19, 0.075],
   headPivot: [0, 0.315, 0],
   antenna: [0.285, 0.49, -0.15], // on top of the head, near the back corners
+  eye: [0.094, 0.416, 0.258], // lens housing centre (x mirrored); the scan's eye bumps sit inside it
+  sideCam: [0.285, 0.454, 0.232], // third camera on the left front corner of the head
   headWidth: 0.62,
 }
 
@@ -73,6 +75,9 @@ export const SCAN_LAYOUT = {
   neckBase: [0, NECK_BASE.y - LEG.H.y, NECK_BASE.z],
   neckMid: [0, HEAD_PIVOT.y - NECK_BASE.y, HEAD_PIVOT.z - NECK_BASE.z],
   antenna: [M.antenna[0] * SCAN_SCALE, toRobot(0, M.antenna[1], 0).y - HEAD_PIVOT.y, M.antenna[2] * SCAN_SCALE - HEAD_PIVOT.z],
+  eye: toRobot(...M.eye).sub(HEAD_PIVOT).toArray(), // x mirrored per side
+  sideCam: toRobot(...M.sideCam).sub(HEAD_PIVOT).toArray(),
+  faceTilt: 0.12, // the face plate looks slightly down
 }
 
 export const BONES = ['torso', 'neck', 'head', 'thighL', 'shinL', 'footL', 'thighR', 'shinR', 'footR']
@@ -192,15 +197,13 @@ const PAINT = {
   neck: [[198, 201, 205], 0.5, 0],
   mount: [[126, 131, 137], 0.5, 0.1], // mid grey mounts and actuators
   display: [[84, 88, 94], 0.45, 0.1], // display panel frame
-  recess: [[40, 43, 47], 0.4, 0], // dark window / lens mounts / vent
-  lens: [[14, 15, 17], 0.12, 0], // glossy black lens
+  recess: [[40, 43, 47], 0.4, 0], // dark window / camera backing / vent
   cable: [[30, 31, 34], 0.45, 0],
   blue: [[38, 104, 222], 0.42, 0],
   orange: [[242, 138, 40], 0.5, 0],
   bronze: [[184, 142, 88], 0.32, 0.7], // leg joints
 }
 
-const EYES = [-0.094, 0.094] // lens centres (x) on the face, y = 0.416
 const KNEE_YZ = [-0.325, -0.13]
 
 /**
@@ -214,16 +217,9 @@ function paintAt(x, y, z, nx, ny, nz) {
   const ax = Math.abs(x)
   const head = y > 0.345 || (y > 0.3 && ax > 0.1)
   if (head) {
-    // side camera on the left front corner
-    if (x > 0.235 && x < 0.325 && y > 0.42 && y < 0.49 && z > 0.18) return nz > 0.6 && z > 0.255 ? PAINT.lens : PAINT.recess
-    if (nz > 0.2) {
-      for (const ex of EYES) {
-        const dx = Math.abs(x - ex)
-        const dy = Math.abs(y - 0.416)
-        if (dx * dx + dy * dy < 0.029 * 0.029) return PAINT.lens
-        if (dx ** 4 + dy ** 4 < 0.046 ** 4) return PAINT.recess // square mount, rounded corners
-      }
-    }
+    // dark backing behind the 3D camera eyes and the side camera (see ScanRobot)
+    if (x > 0.235 && x < 0.325 && y > 0.42 && y < 0.49 && z > 0.18) return PAINT.recess
+    if (nz > 0.2 && y > 0.365 && y < 0.467 && Math.abs(Math.abs(x) - M.eye[0]) < 0.049) return PAINT.recess
     if (nz > 0.45 && z < 0.25 && y > 0.37 && y < 0.496 && ax < 0.27) return PAINT.panel
     if (ny > 0.6 && z > 0.212 && z < 0.232 && ax > 0.07 && ax < 0.26) return PAINT.blue // racing stripes on top
     if (Math.abs(nx) > 0.6) {
@@ -274,7 +270,15 @@ function paintAt(x, y, z, nx, ny, nz) {
  * colour of the surface point it maps to (plus a roughness / metalness
  * texture so the lenses shine and the joints read as metal).
  */
-function paintTextures(geometry, size) {
+async function paintTextures(geometry, size) {
+  // work in ~8 ms slices so the loader animation keeps running
+  let sliceStart = performance.now()
+  const yieldIfBusy = async () => {
+    if (performance.now() - sliceStart < 8) return
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    sliceStart = performance.now()
+  }
+
   const pos = geometry.getAttribute('position')
   const uv = geometry.getAttribute('uv')
   const index = geometry.getIndex()
@@ -303,6 +307,7 @@ function paintTextures(geometry, size) {
   // two passes: texels inside a triangle first, then the ones touching its edges
   for (const pass of [0, 1]) {
     for (let t = 0; t < T; t++) {
+      if ((t & 127) === 0) await yieldIfBusy()
       const i0 = index.getX(t * 3)
       const i1 = index.getX(t * 3 + 1)
       const i2 = index.getX(t * 3 + 2)
@@ -345,6 +350,7 @@ function paintTextures(geometry, size) {
   let tail = 0
   for (let i = 0; i < W * W; i++) if (painted[i]) queue[tail++] = i
   while (head < tail) {
+    if ((head & 65535) === 0) await yieldIfBusy()
     const i = queue[head++]
     const x = i % W
     for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
@@ -376,6 +382,8 @@ function paintTextures(geometry, size) {
  */
 export async function loadScanRobot({ signal, timeoutMs = 30000, textureSize = 1024 } = {}) {
   const loader = new GLTFLoader()
+  // the scan's own texture is never used (the robot is painted), so skip decoding it
+  loader.register(() => ({ name: 'skip_textures', loadTexture: () => Promise.resolve(null) }))
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('scan robot: timeout')), timeoutMs))
   const gltf = await Promise.race([loader.loadAsync(SCAN_URL), timeout])
   if (signal?.aborted) throw new Error('aborted')
@@ -386,7 +394,12 @@ export async function loadScanRobot({ signal, timeoutMs = 30000, textureSize = 1
   })
   if (!source) throw new Error('scan robot: no mesh')
 
-  const { map, orm } = paintTextures(source.geometry, textureSize)
+  const { map, orm } = await paintTextures(source.geometry, textureSize)
+  if (signal?.aborted) {
+    map.dispose()
+    orm.dispose()
+    throw new Error('aborted')
+  }
   const material = new THREE.MeshStandardMaterial({
     map,
     roughnessMap: orm, // G channel
@@ -401,7 +414,6 @@ export async function loadScanRobot({ signal, timeoutMs = 30000, textureSize = 1
   const geometry = buildSkinnedGeometry(source.geometry)
   const boneInverses = restFrames().map((f) => f.clone().invert())
 
-  source.material?.map?.dispose()
   source.geometry.dispose()
   source.material?.dispose()
   return { geometry, material, boneInverses }

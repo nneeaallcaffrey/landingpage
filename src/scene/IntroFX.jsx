@@ -5,21 +5,16 @@ import { SCENE_PHASES as P, TIMING, TIME_SCALE } from './phases'
 
 /**
  * Cinematic intro layer rendered inside the main (static) camera view:
- *  - a full-frame "veil" that hides the room during loading, darkens slightly
- *    while the liquid loader goes critical, then fades to reveal the room
- *  - a controlled white energy burst (star-like particles + a short flash)
+ *  - a full-frame "veil" that hides the room during loading, turns black once
+ *    the loader reaches 100%, then fades to reveal the room
+ *  - a controlled white energy burst on black (star-like particles + a flash)
  */
 
 const VEIL_WHITE = new THREE.Color('#f7f7f5')
-const VEIL_CRITICAL = new THREE.Color('#d8dcda')
-const VEIL_BRIGHT = new THREE.Color('#fbfbfa')
+const VEIL_BLACK = new THREE.Color('#000000')
 const BURST_DIST = 2.0
 
 const clamp01 = (x) => Math.min(1, Math.max(0, x))
-const smootherstep = (x) => {
-  x = clamp01(x)
-  return x * x * x * (x * (x * 6 - 15) + 10)
-}
 const easeInOutSine = (x) => -(Math.cos(Math.PI * clamp01(x)) - 1) / 2
 
 const particleVertex = /* glsl */ `
@@ -225,7 +220,7 @@ export default function IntroFX({ phase, introState, onPhaseDone, count }) {
     flash.current.scale.setScalar(flashSize)
 
     if (phase === P.LOADING) {
-      veilMat.color.copy(VEIL_WHITE).lerp(VEIL_CRITICAL, Math.pow(introState.collapse, 1.4))
+      veilMat.color.copy(VEIL_WHITE).lerp(VEIL_BLACK, introState.dark ?? 0)
       veilMat.opacity = 1
       points.current.visible = false
       flash.current.visible = false
@@ -234,15 +229,15 @@ export default function IntroFX({ phase, introState, onPhaseDone, count }) {
       flash.current.visible = true
       material.uniforms.uTime.value = t
       flashMat.uniforms.uT.value = t
-      // stay dim while the stars fly out, then bloom to near-white as they fade
-      veilMat.color.copy(VEIL_CRITICAL).lerp(VEIL_BRIGHT, smootherstep((t - 0.28) / 0.55))
+      veilMat.color.copy(VEIL_BLACK)
       veilMat.opacity = 1
       if (t >= TIMING.explosion) report(P.EXPLOSION)
     } else if (phase === P.ROOM_REVEAL) {
       const tt = TIMING.explosion + t
       material.uniforms.uTime.value = tt
       flashMat.uniforms.uT.value = tt
-      veilMat.color.copy(VEIL_BRIGHT)
+      // the room fades in from black while the last stars drift out
+      veilMat.color.copy(VEIL_BLACK)
       veilMat.opacity = 1 - easeInOutSine(t / TIMING.roomReveal)
       if (t >= TIMING.roomReveal) report(P.ROOM_REVEAL)
     }
