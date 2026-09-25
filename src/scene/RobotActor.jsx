@@ -13,6 +13,7 @@ function useScanRobotModel(textureSize) {
     const dispose = (m) => {
       m.geometry.dispose()
       m.material.map?.dispose()
+      m.material.roughnessMap?.dispose()
       m.material.dispose()
     }
     loadScanRobot({ signal: controller.signal, textureSize })

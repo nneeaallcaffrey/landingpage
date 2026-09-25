@@ -7,7 +7,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
  * mesh, so on load it is skinned to the articulated rig: every vertex gets
  * smooth weights for torso / neck / head / thigh / shin / foot bones, so the
  * shell bends continuously at the joints (no gaps, cables stay connected).
- * The scanned texture is repainted with a clean white / blue palette.
+ * The scan's own texture is blotchy, so the robot is painted with the
+ * reference robot's livery instead (see paintAt).
  */
 export const SCAN_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_3JYrbVW8ZPjbhxDps9SqPjdTffR/hf_20260925_134640_31e27666-a76b-4db6-9e85-ac6d6296233d.glb'
@@ -181,205 +182,191 @@ function buildSkinnedGeometry(source) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Repaint: flat white / blue / graphite palette decided on the 3D surface     */
+/* Paint job: the reference robot's livery, drawn on the 3D shape             */
 /* -------------------------------------------------------------------------- */
 
-const PALETTE = [
-  [233, 236, 239], // 0 white shell
-  [34, 119, 198], // 1 blue panels
-  [93, 98, 104], // 2 graphite (face plate)
-  [36, 39, 43], // 3 dark joints / display / neck
-  [224, 150, 46], // 4 amber accents
-]
+// colour (sRGB), roughness, metalness
+const PAINT = {
+  shell: [[236, 235, 231], 0.55, 0], // off-white shell
+  panel: [[214, 216, 219], 0.55, 0], // light grey face plate / vent frame
+  neck: [[198, 201, 205], 0.5, 0],
+  mount: [[126, 131, 137], 0.5, 0.1], // mid grey mounts and actuators
+  display: [[84, 88, 94], 0.45, 0.1], // display panel frame
+  recess: [[40, 43, 47], 0.4, 0], // dark window / lens mounts / vent
+  lens: [[14, 15, 17], 0.12, 0], // glossy black lens
+  cable: [[30, 31, 34], 0.45, 0],
+  blue: [[38, 104, 222], 0.42, 0],
+  orange: [[242, 138, 40], 0.5, 0],
+  bronze: [[184, 142, 88], 0.32, 0.7], // leg joints
+}
 
-function classify(r, g, b) {
-  const lum = 0.3 * r + 0.59 * g + 0.11 * b
-  const sat = Math.max(r, g, b) - Math.min(r, g, b)
-  if (b > r + 22 && b >= g - 4) return 1
-  if (r > b + 45 && r >= g && sat > 50) return 4
-  if (lum >= 105) return 0 // light grey is baked shading on the white shell
-  if (lum >= 55) return 2
-  return 3
+const EYES = [-0.094, 0.094] // lens centres (x) on the face, y = 0.416
+const KNEE_YZ = [-0.325, -0.13]
+
+/**
+ * Livery at a point of the source mesh (model units: soles at y = -0.5,
+ * facing +Z) with face normal n. Modelled on the reference render: white
+ * shell, light grey face with black square lens mounts, blue stripes and
+ * leg covers, a dark display window, bronze joints, blue feet with an
+ * orange sole.
+ */
+function paintAt(x, y, z, nx, ny, nz) {
+  const ax = Math.abs(x)
+  const head = y > 0.345 || (y > 0.3 && ax > 0.1)
+  if (head) {
+    // side camera on the left front corner
+    if (x > 0.235 && x < 0.325 && y > 0.42 && y < 0.49 && z > 0.18) return nz > 0.6 && z > 0.255 ? PAINT.lens : PAINT.recess
+    if (nz > 0.2) {
+      for (const ex of EYES) {
+        const dx = Math.abs(x - ex)
+        const dy = Math.abs(y - 0.416)
+        if (dx * dx + dy * dy < 0.029 * 0.029) return PAINT.lens
+        if (dx ** 4 + dy ** 4 < 0.046 ** 4) return PAINT.recess // square mount, rounded corners
+      }
+    }
+    if (nz > 0.45 && z < 0.25 && y > 0.37 && y < 0.496 && ax < 0.27) return PAINT.panel
+    if (ny > 0.6 && z > 0.212 && z < 0.232 && ax > 0.07 && ax < 0.26) return PAINT.blue // racing stripes on top
+    if (Math.abs(nx) > 0.6) {
+      if (Math.abs(z - 0.7 * (y - 0.36) - 0.05) < 0.016) return PAINT.blue // diagonal side stripe
+      if (y > 0.36 && y < 0.378 && z < 0.05 && z > -0.2) return PAINT.blue
+    }
+    if (ny < -0.6 && ax < 0.1) return PAINT.mount
+    return PAINT.shell
+  }
+
+  if (ax < 0.1 && y > 0.175) return y > 0.325 || y < 0.2 ? PAINT.mount : PAINT.neck
+
+  if (ax < 0.172 && y > -0.222 && y <= 0.185) {
+    // body box
+    if (nz > 0.6 && z > 0.18) {
+      // front: display window (orange coils, bronze pads) and a V vent
+      if (ax < 0.078 && y > -0.014 && y < 0.066 && z < 0.214) {
+        if (y > 0.034 && y < 0.054 && ((x + 0.078) / 0.026) % 1 < 0.45) return PAINT.orange
+        if (y > 0.002 && y < 0.016 && ax < 0.05 && ((x + 0.05) / 0.034) % 1 < 0.6) return PAINT.bronze
+        return PAINT.recess
+      }
+      if (ax < 0.095 && y > -0.03 && y < 0.083) return PAINT.display
+      if (ax < 0.09 && y > -0.162 && y < -0.058 && z < 0.2165) return ((y + 0.162) / 0.012) % 1 < 0.35 ? PAINT.mount : PAINT.recess
+      if (ax < 0.105 && y > -0.172 && y < -0.05) return PAINT.panel
+    }
+    if (Math.abs(ny) < 0.5 && ((y > 0.098 && y < 0.12) || y < -0.198)) return PAINT.blue // stripe + bottom band
+    if (ax > 0.128 && y > -0.205 && y < 0 && z > -0.24 && z < 0.075) return PAINT.mount // hip actuator bay
+    return PAINT.shell
+  }
+
+  if (ax > 0.262 && y < 0 && y > -0.37) return PAINT.cable // cables along the legs
+  if (ax >= 0.172 && y > 0) return y < 0.095 ? PAINT.blue : PAINT.cable // cable loops + connectors
+  if (y > -0.235) return PAINT.shell // side housings
+
+  // legs
+  if (Math.hypot(y - KNEE_YZ[0], z - KNEE_YZ[1]) < 0.045) return PAINT.bronze
+  if (y > -0.325) return PAINT.blue // thigh cover
+  if (y > -0.432) return PAINT.shell // shin
+  if (y > -0.452) return PAINT.bronze // ankle
+  if (y > -0.477) return PAINT.blue // foot
+  if (y > -0.492) return PAINT.orange // sole
+  return PAINT.panel // base plate
 }
 
 /**
- * Repaints the scan's texture with the clean palette. The scan's UV atlas is
- * cut into hundreds of small islands, so filtering the image itself leaves
- * specks and dark seams. Instead every surface vertex votes on its colour
- * (from the texels around it, smoothed over its mesh neighbours), and each
- * triangle is repainted from its vertices' votes: flat colours, crisp edges,
- * no dirt, and both sides of every UV seam agree.
+ * Paints the livery into the mesh's own UV layout: every texel gets the
+ * colour of the surface point it maps to (plus a roughness / metalness
+ * texture so the lenses shine and the joints read as metal).
  */
-function paintTexture(image, geometry, size) {
-  const K = PALETTE.length
+function paintTextures(geometry, size) {
   const pos = geometry.getAttribute('position')
   const uv = geometry.getAttribute('uv')
   const index = geometry.getIndex()
   const T = index.count / 3
-
-  // source texels
-  const S = image.width
-  const srcCanvas = document.createElement('canvas')
-  srcCanvas.width = srcCanvas.height = S
-  const sctx = srcCanvas.getContext('2d', { willReadFrequently: true })
-  sctx.drawImage(image, 0, 0, S, S)
-  const src = sctx.getImageData(0, 0, S, S).data
-  const classAt = (u, v) => {
-    const x = Math.min(S - 1, Math.max(0, Math.floor(u * S)))
-    const y = Math.min(S - 1, Math.max(0, Math.floor(v * S)))
-    const i = (y * S + x) * 4
-    return classify(src[i], src[i + 1], src[i + 2])
-  }
-
-  // vertices merged by position (UV seams split them in the source mesh)
-  const ids = new Map()
-  const vid = new Int32Array(pos.count)
-  for (let i = 0; i < pos.count; i++) {
-    const key = `${Math.round(pos.getX(i) * 1e5)},${Math.round(pos.getY(i) * 1e5)},${Math.round(pos.getZ(i) * 1e5)}`
-    let id = ids.get(key)
-    if (id === undefined) ids.set(key, (id = ids.size))
-    vid[i] = id
-  }
-  const NV = ids.size
-
-  // each triangle votes with 7 texels, weighted by its surface area
-  const votes = new Float32Array(NV * K)
+  const W = size
+  const colour = new Uint8ClampedArray(W * W * 4)
+  const orm = new Uint8ClampedArray(W * W * 4)
+  const painted = new Uint8Array(W * W)
   const a = new THREE.Vector3()
   const b = new THREE.Vector3()
   const c = new THREE.Vector3()
+  const n = new THREE.Vector3()
   const tri = new THREE.Triangle()
-  const hist = new Float32Array(K)
-  const SAMPLES = [
-    [1 / 3, 1 / 3],
-    [5 / 9, 2 / 9],
-    [2 / 9, 5 / 9],
-    [2 / 9, 2 / 9],
-    [4 / 9, 4 / 9],
-    [1 / 9, 4 / 9],
-    [4 / 9, 1 / 9],
-  ]
-  for (let t = 0; t < T; t++) {
-    const i0 = index.getX(t * 3)
-    const i1 = index.getX(t * 3 + 1)
-    const i2 = index.getX(t * 3 + 2)
-    tri.set(a.fromBufferAttribute(pos, i0), b.fromBufferAttribute(pos, i1), c.fromBufferAttribute(pos, i2))
-    const w = tri.getArea() / SAMPLES.length
-    hist.fill(0)
-    for (const [s1, s2] of SAMPLES) {
-      const s0 = 1 - s1 - s2
-      const u = s0 * uv.getX(i0) + s1 * uv.getX(i1) + s2 * uv.getX(i2)
-      const v = s0 * uv.getY(i0) + s1 * uv.getY(i1) + s2 * uv.getY(i2)
-      hist[classAt(u, v)] += w
-    }
-    for (const i of [i0, i1, i2]) for (let k = 0; k < K; k++) votes[vid[i] * K + k] += hist[k]
+
+  const write = (i, px, py, pz) => {
+    const [rgb, rough, metal] = paintAt(px, py, pz, n.x, n.y, n.z)
+    colour.set(rgb, i * 4)
+    colour[i * 4 + 3] = 255
+    orm[i * 4] = 255
+    orm[i * 4 + 1] = rough * 255
+    orm[i * 4 + 2] = metal * 255
+    orm[i * 4 + 3] = 255
+    painted[i] = 1
   }
 
-  // one smoothing pass over mesh neighbours removes isolated specks
-  const edges = new Set()
-  for (let t = 0; t < T; t++) {
-    for (let e = 0; e < 3; e++) {
-      const p = vid[index.getX(t * 3 + e)]
-      const q = vid[index.getX(t * 3 + ((e + 1) % 3))]
-      if (p !== q) edges.add(p < q ? p * NV + q : q * NV + p)
-    }
-  }
-  const smoothed = votes.slice()
-  for (const e of edges) {
-    const p = Math.floor(e / NV)
-    const q = e - p * NV
-    for (let k = 0; k < K; k++) {
-      smoothed[p * K + k] += 0.5 * votes[q * K + k]
-      smoothed[q * K + k] += 0.5 * votes[p * K + k]
-    }
-  }
-  for (let v = 0; v < NV; v++) {
-    let sum = 0
-    for (let k = 0; k < K; k++) sum += smoothed[v * K + k]
-    if (sum > 0) for (let k = 0; k < K; k++) smoothed[v * K + k] /= sum
-  }
-
-  // repaint every triangle in UV space from its vertices' votes
-  const W = size
-  const label = new Uint8Array(W * W).fill(255)
-  for (let t = 0; t < T; t++) {
-    const i0 = index.getX(t * 3)
-    const i1 = index.getX(t * 3 + 1)
-    const i2 = index.getX(t * 3 + 2)
-    const ax = uv.getX(i0) * W
-    const ay = uv.getY(i0) * W
-    const bx = uv.getX(i1) * W
-    const by = uv.getY(i1) * W
-    const cx = uv.getX(i2) * W
-    const cy = uv.getY(i2) * W
-    const den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
-    if (Math.abs(den) < 1e-9) continue
-    const eps = 0.75 / Math.max(Math.sqrt(Math.abs(den)), 1) // include texels touching the edges
-    const v0 = vid[i0] * K
-    const v1 = vid[i1] * K
-    const v2 = vid[i2] * K
-    const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx)))
-    const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cx)))
-    const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy)))
-    const y1 = Math.min(W - 1, Math.ceil(Math.max(ay, by, cy)))
-    for (let y = y0; y <= y1; y++) {
-      const py = y + 0.5
-      for (let x = x0; x <= x1; x++) {
-        const px = x + 0.5
-        const l0 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / den
-        const l1 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / den
-        const l2 = 1 - l0 - l1
-        if (l0 < -eps || l1 < -eps || l2 < -eps) continue
-        const w0 = Math.min(1, Math.max(0, l0))
-        const w1 = Math.min(1, Math.max(0, l1))
-        const w2 = Math.min(1, Math.max(0, l2))
-        let best = 0
-        let bestP = -1
-        for (let k = 0; k < K; k++) {
-          const p = w0 * smoothed[v0 + k] + w1 * smoothed[v1 + k] + w2 * smoothed[v2 + k]
-          if (p > bestP) {
-            bestP = p
-            best = k
-          }
+  // two passes: texels inside a triangle first, then the ones touching its edges
+  for (const pass of [0, 1]) {
+    for (let t = 0; t < T; t++) {
+      const i0 = index.getX(t * 3)
+      const i1 = index.getX(t * 3 + 1)
+      const i2 = index.getX(t * 3 + 2)
+      tri.set(a.fromBufferAttribute(pos, i0), b.fromBufferAttribute(pos, i1), c.fromBufferAttribute(pos, i2))
+      tri.getNormal(n)
+      const ax = uv.getX(i0) * W
+      const ay = uv.getY(i0) * W
+      const bx = uv.getX(i1) * W
+      const by = uv.getY(i1) * W
+      const cx = uv.getX(i2) * W
+      const cy = uv.getY(i2) * W
+      const den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+      if (Math.abs(den) < 1e-9) continue
+      const eps = pass === 0 ? 1e-6 : 0.75 / Math.max(Math.sqrt(Math.abs(den)), 1)
+      const x0 = Math.max(0, Math.floor(Math.min(ax, bx, cx)))
+      const x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cx)))
+      const y0 = Math.max(0, Math.floor(Math.min(ay, by, cy)))
+      const y1 = Math.min(W - 1, Math.ceil(Math.max(ay, by, cy)))
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          const i = y * W + x
+          if (pass === 1 && painted[i]) continue
+          const l0 = ((by - cy) * (x + 0.5 - cx) + (cx - bx) * (y + 0.5 - cy)) / den
+          const l1 = ((cy - ay) * (x + 0.5 - cx) + (ax - cx) * (y + 0.5 - cy)) / den
+          const l2 = 1 - l0 - l1
+          if (l0 < -eps || l1 < -eps || l2 < -eps) continue
+          const w0 = Math.min(1, Math.max(0, l0))
+          const w1 = Math.min(1, Math.max(0, l1))
+          const w2 = Math.min(1, Math.max(0, l2))
+          const s = w0 + w1 + w2
+          write(i, (w0 * a.x + w1 * b.x + w2 * c.x) / s, (w0 * a.y + w1 * b.y + w2 * c.y) / s, (w0 * a.z + w1 * b.z + w2 * c.z) / s)
         }
-        label[y * W + x] = best
       }
     }
   }
 
-  // gutters take the nearest painted colour so mip-maps never bleed
+  // gutters take the nearest painted texel so mip-maps never bleed
   const queue = new Int32Array(W * W)
   let head = 0
   let tail = 0
-  for (let i = 0; i < W * W; i++) if (label[i] !== 255) queue[tail++] = i
+  for (let i = 0; i < W * W; i++) if (painted[i]) queue[tail++] = i
   while (head < tail) {
     const i = queue[head++]
     const x = i % W
     for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
-      if (j >= 0 && j < W * W && label[j] === 255) {
-        label[j] = label[i]
+      if (j >= 0 && j < W * W && !painted[j]) {
+        painted[j] = 1
+        colour.copyWithin(j * 4, i * 4, i * 4 + 4)
+        orm.copyWithin(j * 4, i * 4, i * 4 + 4)
         queue[tail++] = j
       }
     }
   }
 
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = W
-  const ctx = canvas.getContext('2d')
-  const dst = ctx.createImageData(W, W)
-  for (let i = 0; i < W * W; i++) {
-    const col = PALETTE[label[i] === 255 ? 0 : label[i]]
-    dst.data[i * 4] = col[0]
-    dst.data[i * 4 + 1] = col[1]
-    dst.data[i * 4 + 2] = col[2]
-    dst.data[i * 4 + 3] = 255
+  const toTexture = (data, colorSpace) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = W
+    canvas.getContext('2d').putImageData(new ImageData(data, W, W), 0, 0)
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.flipY = false // glTF UV convention
+    texture.colorSpace = colorSpace
+    texture.anisotropy = 4
+    return texture
   }
-  ctx.putImageData(dst, 0, 0)
-
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.flipY = false // glTF UV convention
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = 4
-  return texture
+  return { map: toTexture(colour, THREE.SRGBColorSpace), orm: toTexture(orm, THREE.NoColorSpace) }
 }
 
 /**
@@ -398,21 +385,22 @@ export async function loadScanRobot({ signal, timeoutMs = 30000, textureSize = 1
   })
   if (!source) throw new Error('scan robot: no mesh')
 
-  const srcMap = source.material?.map
-  const map = srcMap?.image ? paintTexture(srcMap.image, source.geometry, textureSize) : null
+  const { map, orm } = paintTextures(source.geometry, textureSize)
   const material = new THREE.MeshStandardMaterial({
     map,
+    roughnessMap: orm, // G channel
+    metalnessMap: orm, // B channel
+    roughness: 1,
+    metalness: 1,
     // a little self-illumination keeps the white shell reading white
     emissiveMap: map,
     emissive: new THREE.Color('#ffffff'),
-    emissiveIntensity: 0.3,
-    roughness: 0.62,
-    metalness: 0,
+    emissiveIntensity: 0.22,
   })
   const geometry = buildSkinnedGeometry(source.geometry)
   const boneInverses = restFrames().map((f) => f.clone().invert())
 
-  srcMap?.dispose()
+  source.material?.map?.dispose()
   source.geometry.dispose()
   source.material?.dispose()
   return { geometry, material, boneInverses }
