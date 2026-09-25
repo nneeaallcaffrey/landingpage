@@ -54,14 +54,6 @@ export default function Navbar({ visibility = 'active' }) {
           ))}
         </nav>
 
-        <a
-          href="#spade-hero"
-          className="hidden md:block text-[23px] text-black underline underline-offset-2 hover:opacity-60 transition-opacity"
-          tabIndex={interactive ? 0 : -1}
-        >
-          Get in touch
-        </a>
-
         <button
           type="button"
           className="md:hidden flex flex-col justify-center items-center gap-[5px] w-10 h-10 -mr-2"
@@ -97,14 +89,6 @@ export default function Navbar({ visibility = 'active' }) {
               {link}
             </a>
           ))}
-          <a
-            href="#spade-hero"
-            onClick={close}
-            className="mt-10 text-2xl text-black underline underline-offset-2 hover:opacity-60 transition-opacity"
-            tabIndex={isMobileMenuOpen ? 0 : -1}
-          >
-            Get in touch
-          </a>
         </nav>
       </div>
     </>

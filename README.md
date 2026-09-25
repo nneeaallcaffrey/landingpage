@@ -43,8 +43,8 @@ A phase can only advance from itself, so every transition happens exactly once.
 | `src/scene/Scene.jsx` | Canvas, fixed camera, studio lighting, white room, contact shadows |
 | `src/scene/IntroFX.jsx` | Full-frame veil + white star-particle burst (custom shaders) |
 | `src/scene/RobotActor.jsx` | Loads the Higgsfield robot; falls back to the procedural one if it can't be downloaded |
-| `src/scene/scanRobotModel.js` | Downloads the Higgsfield mesh and cuts it into rigid, pivot-relative parts |
-| `src/scene/ScanRobot.jsx` | The Higgsfield robot on the articulated rig (joint caps, 15 cm ear antennas) |
+| `src/scene/scanRobotModel.js` | Downloads the Higgsfield mesh, skins it to the rig and repaints its texture with a clean palette |
+| `src/scene/ScanRobot.jsx` | The Higgsfield robot as one skinned mesh on the articulated rig (15 cm antennas) |
 | `src/scene/Robot.jsx` | Procedural fallback robot (every joint is its own pivot) |
 | `src/scene/useRobotRig.js` | Connects any rig to the controller (phases, frame loop, resize handling) |
 | `src/scene/robotController.js` | Footstep planner, 2-bone leg IK, body dynamics, head/neck control, choreography |
@@ -62,12 +62,8 @@ A phase can only advance from itself, so every transition happens exactly once.
 
 ## Robot design & Higgsfield
 
-The robot is the **first model generated with Higgsfield** (SAM 3D) from the white / blue bipedal service-robot reference. It's a single textured mesh, so at load time `scanRobotModel.js` cuts it into rigid parts:
-- torso
-- neck
-- head
-- thighs, shins and feet
+The robot is the **first model generated with Higgsfield** (SAM 3D) from the white / blue bipedal service-robot reference. It's a single textured mesh, so at load time `scanRobotModel.js` skins it to the articulated rig. Every vertex gets smooth weights for the torso, neck, head, thigh, shin and foot bones. The bones sit at landmarks measured on the mesh: hips, a reverse (digitigrade) knee, ankles, the neck base and the head pivot. The shell bends continuously at every joint, so there are no gaps and the cables stay connected.
 
-Each part hangs off the articulated rig at landmarks measured on the mesh: hips, a reverse (digitigrade) knee, ankles, the neck base and the head pivot. Dark joint caps hide the cuts, and a 15 cm antenna rises from the "ear" on each side of the head.
+The scanned texture is repainted with a clean white / blue / graphite palette; a majority filter removes the scan's small dark specks. A 15 cm antenna rises from each side of the head.
 
 The mesh is loaded at runtime from the Higgsfield CDN (`SCAN_URL`, CORS-enabled, immutable). The intro loader holds at 90% until it's ready. If the download fails or takes longer than 30 s, the hand-modelled procedural robot takes over automatically, running the same animation system.
