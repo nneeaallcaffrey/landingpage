@@ -5,11 +5,7 @@ export const SCENE_PHASES = {
   ROBOT_ENTERING: 'robotEntering',
   ROBOT_CENTER: 'robotCenter',
   ROBOT_CONFUSED: 'robotConfused',
-  ROBOT_TRACKING: 'robotTracking',
-  ROBOT_MOVING_ASIDE: 'robotMovingAside',
-  ROBOT_FACING_WALL: 'robotFacingWall',
-  ROBOT_LOWERING: 'robotLowering',
-  HERO_ACTIVE: 'heroActive',
+  ROBOT_TRACKING: 'robotTracking', // final state: the robot follows the cursor
 }
 
 export const PHASE_ORDER = [
@@ -20,10 +16,6 @@ export const PHASE_ORDER = [
   SCENE_PHASES.ROBOT_CENTER,
   SCENE_PHASES.ROBOT_CONFUSED,
   SCENE_PHASES.ROBOT_TRACKING,
-  SCENE_PHASES.ROBOT_MOVING_ASIDE,
-  SCENE_PHASES.ROBOT_FACING_WALL,
-  SCENE_PHASES.ROBOT_LOWERING,
-  SCENE_PHASES.HERO_ACTIVE,
 ]
 
 export function nextPhase(phase) {

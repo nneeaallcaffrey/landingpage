@@ -11,12 +11,13 @@ const CAMERA = { position: [0, 0.62, 3.35], fov: 28, near: 0.05, far: 60 }
 const CAMERA_TARGET = new THREE.Vector3(0, 0.5, 0)
 // Neutral tone mapping keeps the whites white (ACES would grey the room down).
 const GL = { antialias: true, powerPreference: 'high-performance', toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.12 }
-const ROOM_BG = '#f6f6f4'
+// Deep red studio, like the backdrop of the hero video. The room is flat-shaded
+// (no lighting maths on the pixels that fill the screen); only the robot's
+// shadow is drawn on top of the floor.
+const ROOM_BG = '#c01422'
 const WALL_Z = -2.4
-// The room is flat-shaded (no lighting maths on the pixels that fill the screen);
-// only the robot's shadow is drawn on top of the floor.
-const WALL_COLOR = '#efefed'
-const FLOOR_COLOR = '#f2f2f0'
+const WALL_COLOR = '#c01422'
+const FLOOR_COLOR = '#ab101d'
 
 /**
  * Aims the camera once, before any sibling reads it. After this the camera is
@@ -56,7 +57,7 @@ function useOcclusionTexture() {
 }
 
 /**
- * Infinite-feeling white robotics room: floor, back wall, barely visible junction.
+ * Infinite-feeling red studio: floor, back wall, barely visible junction.
  * While the intro veil covers the screen the room isn't drawn at all (it renders
  * for its first few frames only, so its shaders are ready before the reveal).
  */
@@ -76,7 +77,7 @@ function Room({ hidden }) {
       </mesh>
       <mesh rotation-x={-Math.PI / 2} position-y={0.001} receiveShadow>
         <planeGeometry args={[60, 60]} />
-        <shadowMaterial color="#1f2421" opacity={0.2} />
+        <shadowMaterial color="#2a0004" opacity={0.3} />
       </mesh>
       <mesh position={[0, 12, WALL_Z]}>
         <planeGeometry args={[60, 24]} />
@@ -85,11 +86,11 @@ function Room({ hidden }) {
       {/* faint occlusion where floor meets wall (~10% visible boundary) */}
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.0015, WALL_Z + 0.45]}>
         <planeGeometry args={[60, 0.9]} />
-        <meshBasicMaterial color="#5d625f" alphaMap={ao} transparent opacity={0.06} depthWrite={false} />
+        <meshBasicMaterial color="#3a0006" alphaMap={ao} transparent opacity={0.08} depthWrite={false} />
       </mesh>
       <mesh position={[0, 0.35, WALL_Z + 0.002]} rotation-z={Math.PI}>
         <planeGeometry args={[60, 0.7]} />
-        <meshBasicMaterial color="#5d625f" alphaMap={ao} transparent opacity={0.045} depthWrite={false} />
+        <meshBasicMaterial color="#3a0006" alphaMap={ao} transparent opacity={0.06} depthWrite={false} />
       </mesh>
     </group>
   )
@@ -119,8 +120,8 @@ function Lights({ quality }) {
       <directionalLight position={[-3, 2, 2.2]} intensity={0.32} />
       {/* soft frontal wash from the viewer's side: lifts the back wall so the floor/wall seam stays faint */}
       <directionalLight position={[0.4, 1.2, 6]} intensity={0.62} />
-      {/* subtle rim from behind */}
-      <directionalLight position={[-1, 2.6, -3]} intensity={0.85} />
+      {/* warm red rim from behind: the studio's colour spilling onto the robot */}
+      <directionalLight position={[-1, 2.6, -3]} intensity={1.1} color="#ff5a5f" />
     </>
   )
 }
@@ -133,14 +134,15 @@ function StudioEnvironment() {
       <Lightformer form="rect" intensity={1.1} position={[-5, 2, 2]} scale={[6, 3, 1]} />
       <Lightformer form="rect" intensity={1.1} position={[5, 2, 1]} scale={[6, 3, 1]} />
       <Lightformer form="rect" intensity={0.8} position={[0, 2, 6]} scale={[8, 4, 1]} />
-      <Lightformer form="rect" intensity={0.45} color="#f3f3f1" position={[0, -3, 0]} scale={[10, 10, 1]} />
+      {/* red floor bounce */}
+      <Lightformer form="rect" intensity={0.7} color="#ff2e3c" position={[0, -3, 0]} scale={[10, 10, 1]} />
     </Environment>
   )
 }
 
-export default function Scene({ phase, onPhaseDone, onRobotReady, introState, mouse, quality, frameloop }) {
+export default function Scene({ phase, onPhaseDone, onRobotReady, introState, mouse, quality }) {
   const showIntroFX = phaseIndex(phase) <= phaseIndex(P.ROOM_REVEAL)
-  const heroActive = phase === P.HERO_ACTIVE
+  const settled = phase === P.ROBOT_TRACKING
   // the veil is fully opaque while loading and during the burst
   const veiled = phase === P.LOADING || phase === P.EXPLOSION
 
@@ -154,7 +156,6 @@ export default function Scene({ phase, onPhaseDone, onRobotReady, introState, mo
       gl={GL}
       dpr={dpr}
       shadows="percentage"
-      frameloop={frameloop}
       style={{ pointerEvents: 'none' }}
     >
       <PerformanceMonitor
@@ -178,8 +179,8 @@ export default function Scene({ phase, onPhaseDone, onRobotReady, introState, mo
           blur={2.4}
           far={1.1}
           opacity={0.42}
-          color="#2a2f2c"
-          frames={veiled ? 0 : heroActive ? 1 : Infinity}
+          color="#2a0004"
+          frames={veiled ? 0 : settled ? 1 : Infinity}
         />
       </RobotActor>
       {showIntroFX && (
