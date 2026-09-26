@@ -7,10 +7,13 @@ import { SCENE_PHASES as P, TIME_SCALE } from './phases'
 const _proj = new THREE.Vector3()
 const _ndc = new THREE.Vector3()
 
+/**
+ * Robot size relative to the studio. On tall (portrait) screens the robot is drawn
+ * a little larger so that, seen from the fixed camera, its head sits in the upper
+ * third of the frame above the text instead of in the middle.
+ */
 export function robotScaleFor(size) {
-  if (size.width < 640) return 0.8
-  if (size.width < 1024) return 0.9
-  return 1
+  return size.width / Math.max(1, size.height) < 1 ? 1.15 : 1
 }
 
 /**
