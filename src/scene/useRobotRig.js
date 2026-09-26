@@ -7,10 +7,13 @@ import { SCENE_PHASES as P, TIME_SCALE } from './phases'
 const _proj = new THREE.Vector3()
 const _ndc = new THREE.Vector3()
 
+/**
+ * Robot size relative to the studio. On tall (portrait) screens the robot is drawn
+ * a little larger so that, seen from the fixed camera, its head sits in the upper
+ * third of the frame above the text instead of in the middle.
+ */
 export function robotScaleFor(size) {
-  if (size.width < 640) return 0.8
-  if (size.width < 1024) return 0.9
-  return 1
+  return size.width / Math.max(1, size.height) < 1 ? 1.15 : 1
 }
 
 /**
@@ -44,16 +47,31 @@ export function useRobotRig({ phase, onPhaseDone, mouse, dims, lensMaterial }) {
     onDoneRef.current = onPhaseDone
   }, [onPhaseDone])
 
-  // Stage-space X of the right viewport edge at a given depth (the camera is static).
   const layout = useMemo(
     () => ({
-      /** NDC of a stage-space point (the stage sits at x = 0 until the hero is active). */
+      /**
+       * Where the robot stands in the frame (like the character of the hero video):
+       * on wide screens its head sits right of centre, clear of the text column;
+       * on tall screens it is centred and the text sits over its lower body.
+       * x: NDC x of the head, headHalf: head half-width (NDC), headTop: max NDC y of
+       * the antenna tips (they may brush the top edge, like hair in a portrait).
+       */
+      anchor() {
+        const { size } = get()
+        const aspect = size.width / Math.max(1, size.height)
+        if (aspect >= 1.2) {
+          return { x: 0.44 + Math.max(0, 1.78 - aspect) * 0.1, headHalf: 0.4 * Math.min(1, aspect / 1.6), headTop: 0.95 }
+        }
+        return { x: 0, headHalf: 0.8, headTop: 0.9 }
+      },
+      /** NDC of a stage-space point (ignores the stage's resize shift). */
       project(x, y, z) {
         const { camera } = get()
         const s = refs.stage.current ? refs.stage.current.scale.x : 1
         camera.updateMatrixWorld()
         return _ndc.set(x * s, y * s, z * s).project(camera)
       },
+      /** Stage-space X of the right viewport edge at a given depth (the camera is static). */
       edgeX(z) {
         const { camera } = get()
         const s = refs.stage.current ? refs.stage.current.scale.x : 1
@@ -98,10 +116,10 @@ export function useRobotRig({ phase, onPhaseDone, mouse, dims, lensMaterial }) {
     const stage = refs.stage.current
     const s = robotScaleFor(state.size)
     if (stage.scale.x !== s) stage.scale.setScalar(s)
-    if (c.phase === P.HERO_ACTIVE) {
-      // Keep ~70% of the robot in frame if the viewport changes. The whole stage
-      // (robot + its baked contact shadow) shifts together, so nothing re-bakes.
-      const desired = c.asideX(layout, c.pos.z) * s
+    if (c.phase === P.ROBOT_CENTER || c.phase === P.ROBOT_CONFUSED || c.phase === P.ROBOT_TRACKING) {
+      // Once it has arrived, keep the robot at its spot if the viewport changes. The
+      // whole stage (robot + its baked contact shadow) shifts together.
+      const desired = c.anchorX(layout, c.pos.z) * s
       const current = stage.position.x + c.pos.x * s
       if (Math.abs(desired - current) > 1e-3) stage.position.x += desired - current
     }

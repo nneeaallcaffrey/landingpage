@@ -59,12 +59,11 @@ export const SCAN_DIMS = {
   kneeDir: -1,
   crouch: 0,
   walkCrouch: 0.04,
-  lowerDepth: 0.07,
   maxStep: 0.12,
   speed: 0.9,
   headWidth: M.headWidth * SCAN_SCALE,
   headTop: 0.89,
-  neck: { base: 0, mid: 0, head: 0, foldBase: 0.35, foldMid: 0, foldHead: -0.2 },
+  neck: { base: 0, mid: 0, head: 0 },
 }
 
 /** Rig layout (all positions relative to the parent pivot). */

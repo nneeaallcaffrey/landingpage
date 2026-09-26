@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 
 /**
- * Types `text` out character by character.
- * Returns the currently displayed string and whether typing has finished.
+ * Types `text` out character by character: after `startDelay` ms, one more
+ * character appears every `speed` ms.
  */
-export function useTypewriter(text, speed = 38, startDelay = 600) {
+export function useTypewriter(text: string, speed = 38, startDelay = 600): { displayed: string; done: boolean } {
   const [displayed, setDisplayed] = useState('')
   const [done, setDone] = useState(false)
 
@@ -12,7 +12,7 @@ export function useTypewriter(text, speed = 38, startDelay = 600) {
     setDisplayed('')
     setDone(false)
     let index = 0
-    let interval = null
+    let interval: ReturnType<typeof setInterval> | undefined
 
     const timeout = setTimeout(() => {
       interval = setInterval(() => {
@@ -20,7 +20,7 @@ export function useTypewriter(text, speed = 38, startDelay = 600) {
         setDisplayed(text.slice(0, index))
         if (index >= text.length) {
           clearInterval(interval)
-          interval = null
+          interval = undefined
           setDone(true)
         }
       }, speed)

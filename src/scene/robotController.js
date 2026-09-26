@@ -24,13 +24,12 @@ export const DIM = {
   kneeDir: 1, // 1: knee bends forward, -1: reverse (digitigrade) knee
   crouch: 0, // extra hip drop while standing
   walkCrouch: 0, // additional hip drop while walking or turning (more reach)
-  lowerDepth: 0.1, // hip drop when the robot lowers itself
   maxStep: 0.14,
   speed: 1, // walking speed multiplier
   headWidth: 0.37,
   headTop: 0.9, // highest point incl. antennas (framing)
-  // neck chain rest angles (base, mid, head) and how they fold when lowering
-  neck: { base: 0.3, mid: -0.6, head: 0.3, foldBase: 0.55, foldMid: -0.8, foldHead: 0.25 },
+  // neck chain rest angles (base, mid, head)
+  neck: { base: 0.3, mid: -0.6, head: 0.3 },
 }
 
 export const MAX_HEAD_YAW = THREE.MathUtils.degToRad(15)
@@ -47,12 +46,6 @@ const smootherstep = (x) => {
   x = clamp(x, 0, 1)
   return x * x * x * (x * (x * 6 - 15) + 10)
 }
-const easeInOutSine = (x) => -(Math.cos(Math.PI * clamp(x, 0, 1)) - 1) / 2
-const easeInOutCubic = (x) => {
-  x = clamp(x, 0, 1)
-  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2
-}
-const easeOutCubic = (x) => 1 - Math.pow(1 - clamp(x, 0, 1), 3)
 
 /** Wrapped signed difference b - a in (-PI, PI]. */
 function angleDiff(a, b) {
@@ -175,13 +168,11 @@ export class RobotController {
 
     this.bob = new Spring()
     this.lean = new Spring()
-    this.lower = new Spring()
     this.shift = new Smooth()
     this.roll = new Smooth()
     this.twist = new Smooth()
     this.leanOffset = new Smooth()
     this.leanOffsetT = 0
-    this.lowerTarget = 0
     this.walkLift = 0
     this.crouch = new Smooth()
     this.nod = new Smooth()
@@ -244,21 +235,23 @@ export class RobotController {
       case P.LOADING:
       case P.EXPLOSION:
       case P.ROOM_REVEAL: {
-        // Park the robot well outside the frame, facing its walking direction.
-        this.placeStanding(-(layout.edgeX(-0.4) + 1.5), -0.4, 1.3)
+        // Park the robot well outside the frame (right), facing its walking direction.
+        this.placeStanding(layout.edgeX(-0.4) + 1.5, -0.4, -1.3)
         this.stepping = false
         break
       }
       case P.ROBOT_ENTERING: {
-        // The robot can only walk forwards: it enters from the left heading +X and
-        // curves towards the viewer, arriving close enough to be framed waist-up.
+        // The robot can only walk forwards: it enters from the right heading -X and
+        // curves towards the viewer, stopping at its spot on the right of the frame,
+        // close enough to be framed from the waist up.
         const zStart = 0.8
-        const start = new THREE.Vector3(-(layout.edgeX(zStart) + 0.3), 0, zStart)
-        const end = new THREE.Vector3(0, 0, this.nearZ(layout))
-        plan.curve = forwardCurve(start, Math.PI / 2, end, 0)
+        const start = new THREE.Vector3(layout.edgeX(zStart) + 0.3, 0, zStart)
+        const zEnd = this.nearZ(layout)
+        const end = new THREE.Vector3(this.anchorX(layout, zEnd), 0, zEnd)
+        plan.curve = forwardCurve(start, -Math.PI / 2, end, 0)
         plan.length = plan.curve.getLength()
         plan.T = Math.max(3.5, (plan.length * 1.34) / (0.38 * this.dim.speed))
-        this.placeStanding(start.x, start.z, Math.PI / 2)
+        this.placeStanding(start.x, start.z, -Math.PI / 2)
         this.stepping = true
         this.headYaw.set(0)
         this.headPitch.set(0.1)
@@ -269,27 +262,6 @@ export class RobotController {
         plan.yaw = this.yaw
         break
       }
-      case P.ROBOT_MOVING_ASIDE: {
-        // Forward-only: turn in place towards the free spot, then walk there.
-        plan.p0 = this.pos.clone()
-        plan.yaw0 = this.yaw
-        const zAside = -0.3
-        plan.aside = new THREE.Vector3(this.asideX(layout, zAside), 0, zAside)
-        plan.yawWalk = Math.atan2(plan.aside.x - plan.p0.x, plan.aside.z - plan.p0.z)
-        plan.dYaw = angleDiff(plan.yaw0, plan.yawWalk)
-        plan.turnStart = 0.45
-        plan.Tt = Math.max(1.2, Math.abs(plan.dYaw) / 1.5)
-        plan.walkStart = plan.turnStart + plan.Tt + 0.15
-        plan.Tw = Math.max(2, (plan.p0.distanceTo(plan.aside) * 1.34) / (0.38 * this.dim.speed))
-        break
-      }
-      case P.ROBOT_FACING_WALL: {
-        plan.yaw0 = this.yaw
-        plan.dYaw = angleDiff(this.yaw, Math.PI)
-        break
-      }
-      case P.ROBOT_LOWERING:
-      case P.HERO_ACTIVE:
       default:
         break
     }
@@ -297,7 +269,8 @@ export class RobotController {
 
   /**
    * Stage-space Z where the robot, facing the camera, is framed from the waist
-   * up — pulled back if needed so the head still fits the viewport width/height.
+   * up — pulled back if needed so the head keeps the width the layout asks for
+   * (layout.anchor()) and stays below the top of the viewport.
    */
   nearZ(layout) {
     const d = this.dim
@@ -315,14 +288,16 @@ export class RobotController {
       return lo
     }
     const waist = search((z) => -layout.project(0, d.waistH ?? d.hipH, z).y - 0.9) // waist on the bottom edge
-    const fitW = search((z) => layout.project(d.headWidth / 2, d.headTop, z).x - 0.86)
-    const fitH = search((z) => layout.project(0, d.headTop, z).y - 0.96)
+    const a = layout.anchor()
+    const fitW = search((z) => layout.project(d.headWidth / 2, d.headTop, z).x - a.headHalf)
+    const fitH = search((z) => layout.project(0, d.headTop, z).y - a.headTop)
     return Math.min(waist, fitW, fitH)
   }
 
-  /** Stage-space X that leaves ~70% of the robot's silhouette inside the frame. */
-  asideX(layout, z) {
-    return layout.edgeX(z) - 0.22 * this.dim.headWidth
+  /** Stage-space X that puts the robot's head at the layout's anchor (NDC x). */
+  anchorX(layout, z) {
+    const y = this.dim.headTop * 0.85
+    return layout.anchor().x / layout.project(1, y, z).x
   }
 
   finish(phase) {
@@ -447,68 +422,6 @@ export class RobotController {
         ht.roll = -mx * 0.035
         this.headSmooth = 0.38
         this.lensGlowT = 0.6
-        break
-      }
-
-      case P.ROBOT_MOVING_ASIDE: {
-        // A) notices the movement — small flinch, attention on the viewer
-        this.leanOffsetT = t < 0.5 ? -0.04 : 0
-        // B) turns in place towards the free spot (the head lingers on the viewer)
-        const ut = easeInOutSine((t - pl.turnStart) / pl.Tt)
-        this.yaw = pl.yaw0 + pl.dYaw * ut
-        // C) walks forwards to make room, then settles
-        const uw = clamp((t - pl.walkStart) / pl.Tw, 0, 1)
-        this.pos.lerpVectors(pl.p0, pl.aside, travelProfile(uw, 0.22, 0.34))
-        const look = this.lookAtCamera(ctx.camera)
-        const away = smootherstep((t - pl.turnStart - pl.Tt * 0.45) / 0.8)
-        ht.yaw = lerp(clamp(look.yaw, -1.1, 1.1), 0, away)
-        ht.pitch = lerp(look.pitch, 0.12, away)
-        ht.roll = 0
-        this.headSmooth = 0.32
-        this.lensGlowT = 0.45 - 0.3 * away
-        if (t >= pl.walkStart + pl.Tw + 0.3 && this.gaitIdle()) this.finish(P.ROBOT_MOVING_ASIDE)
-        break
-      }
-
-      case P.ROBOT_FACING_WALL: {
-        // Body turns first, the head lingers on the viewer, then follows.
-        const u = clamp(t / 2.3, 0, 1)
-        this.yaw = pl.yaw0 + pl.dYaw * easeInOutSine(u)
-        if (t < 1.25) {
-          const look = this.lookAtCamera(ctx.camera)
-          ht.yaw = clamp(look.yaw, -1.15, 1.15)
-          ht.pitch = look.pitch
-          this.headSmooth = 0.35
-        } else {
-          ht.yaw = 0
-          ht.pitch = 0.05
-          this.headSmooth = 0.55
-          this.lensGlowT = 0.15
-        }
-        ht.roll = 0
-        if (t >= 2.9 && this.gaitIdle()) this.finish(P.ROBOT_FACING_WALL)
-        break
-      }
-
-      case P.ROBOT_LOWERING: {
-        // slight knee bend -> lower torso -> compress legs -> settle
-        this.lowerTarget = t < 0.35 ? 0.16 * easeOutCubic(t / 0.35) : 0.16 + 0.84 * easeInOutCubic((t - 0.35) / 1.4)
-        this.leanOffsetT = 0.075 * this.lowerTarget
-        ht.yaw = 0
-        ht.pitch = 0.05 + 0.16 * this.lowerTarget
-        ht.roll = 0
-        this.headSmooth = 0.6
-        this.lensGlowT = 0.05
-        if (t >= 2.7) this.finish(P.ROBOT_LOWERING)
-        break
-      }
-
-      case P.HERO_ACTIVE: {
-        this.lowerTarget = 1
-        this.leanOffsetT = 0.075
-        ht.yaw = 0
-        ht.pitch = 0.21
-        this.lensGlowT = 0.05
         break
       }
 
@@ -665,7 +578,6 @@ export class RobotController {
     this.twist.to(twistT, 0.1, dt)
     this.lean.step(leanT, 60, 0.55, dt)
     this.bob.step(0, 170, 0.5, dt)
-    this.lower.step(this.lowerTarget, 38, 0.72, dt)
     this.walkLift = swingAmt * clamp(speed / 0.35, 0, 1) * 0.006
     const busy = Math.max(clamp(speed / 0.18, 0, 1), clamp(Math.abs(this.yawRate) / 0.8, 0, 1))
     this.crouch.to(this.dim.crouch + this.dim.walkCrouch * busy, 0.3, dt)
@@ -685,12 +597,11 @@ export class RobotController {
 
   apply(dt) {
     const r = this.rig
-    const low = this.lower.x
 
     r.root.position.set(this.pos.x, 0, this.pos.z)
     r.root.rotation.y = this.yaw
     const dim = this.dim
-    r.body.position.set(this.shift.value, dim.hipH - this.crouch.value + this.bob.x + this.walkLift - dim.lowerDepth * low, 0)
+    r.body.position.set(this.shift.value, dim.hipH - this.crouch.value + this.bob.x + this.walkLift, 0)
     r.body.rotation.set(this.lean.x, this.twist.value, this.roll.value)
 
     // head & neck: targets are relative to the root heading; cancel body sway so the head stays stable
@@ -701,14 +612,13 @@ export class RobotController {
     const hy = this.headYaw.value - this.twist.value
     const hp = this.headPitch.value - this.lean.x + this.nod.value
     const hr = this.headRoll.value - this.roll.value
-    const fold = clamp(low, 0, 1.2)
 
     r.neckBase.quaternion
       .setFromAxisAngle(Y_AXIS, hy * 0.3)
-      .multiply(_q1.setFromAxisAngle(X_AXIS, dim.neck.base + dim.neck.foldBase * fold + hp * 0.25))
-    r.neckMid.rotation.set(dim.neck.mid + dim.neck.foldMid * fold, 0, 0)
+      .multiply(_q1.setFromAxisAngle(X_AXIS, dim.neck.base + hp * 0.25))
+    r.neckMid.rotation.set(dim.neck.mid, 0, 0)
     r.head.quaternion
-      .setFromAxisAngle(X_AXIS, dim.neck.head + dim.neck.foldHead * fold)
+      .setFromAxisAngle(X_AXIS, dim.neck.head)
       .multiply(_q1.setFromAxisAngle(Y_AXIS, hy * 0.7))
       .multiply(_q2.setFromAxisAngle(X_AXIS, hp * 0.75))
       .multiply(_q3.setFromAxisAngle(Z_AXIS, hr))
